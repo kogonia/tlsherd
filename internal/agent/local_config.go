@@ -9,19 +9,24 @@ import (
 	"path/filepath"
 
 	"github.com/kogonia/tlsherd/internal/agentcfg"
+	"github.com/kogonia/tlsherd/internal/config"
 )
 
-const (
-	defaultLocalConfigPath = "/etc/tlsherd-agent/agent.local.cfg"
-	localConfigPrevSuffix  = ".prev"
-)
+const localConfigPrevSuffix = ".prev"
 
-// localConfigPath returns the active agent.local.cfg path.
+// localConfigPath returns the active agent.local.cfg path under the agent dir.
 func (a *Agent) localConfigPath() string {
 	if p := a.opts.Bootstrap.LocalConfigPath; p != "" {
 		return p
 	}
-	return defaultLocalConfigPath
+	dir := a.opts.Bootstrap.AgentDir
+	if dir == "" {
+		dir = a.opts.Bootstrap.StateDir
+	}
+	if dir == "" {
+		dir = config.DefaultAgentDir
+	}
+	return filepath.Join(dir, "agent.local.cfg")
 }
 
 func localConfigPrevPath(active string) string {

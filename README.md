@@ -100,20 +100,21 @@ CSS, JavaScript and a vendored HTMX are embedded with `embed.FS`.
 every agent host, and the PostgreSQL database.
 
 **The agent runs commands as root.** Host-local `agent.local.cfg` (default
-`/etc/tlsherd-agent/agent.local.cfg`) owns service type, pre-start verify, restart
+`/var/lib/tlsherd-agent/agent.local.cfg`) owns service type, pre-start verify, restart
 (`systemd`/`docker`/`exec`), and cert/install paths. The agent reports that file to
 the server on enroll/poll; an admin **Edit** on the server page queues a push that
 the agent writes back into the same file (keeping one `agent.local.cfg.prev`). Anyone
 who can edit that local config (on the host or via the server UI) therefore has
 **root on that host**. Schedule settings (poll/window/backups) remain server-authoritative
-in `config.cfg`. Domain `restart_override` is a last-resort per-domain overlay.
+in `config.cfg` in the same agent directory. Domain `restart_override` is a last-resort
+per-domain overlay.
 
 - Treat server admins as root on agent hosts. Keep the admin group small, use strong
   unique passwords, and protect the server host like a jump host.
 - Local-config pushes and schedule edits require confirmation; schedule changes emit
   `agent_config_updated` / audit entries. Review them.
 - Commands are argv lists, never a shell. Certificate paths stay under the cert root.
-  Adjust `User=`, `ReadWritePaths=` (include `/etc/tlsherd-agent`) together with the unit.
+  Adjust `User=`, `ReadWritePaths=` (include `TLSHERD_AGENT_DIR`) together with the unit.
 - Operators with `can_write_config` can push local config to servers in their groups.
 
 **Agent ↔ server channel.** Agents must use HTTPS and verify the server certificate
@@ -242,9 +243,10 @@ Point agents at the **agent** listener (`TLSHERD_SERVER_URL=https://…:8444`).
 On every managed host:
 
 ```sh
-sudo install -d -m 0755 /etc/tlsherd /etc/tlsherd-agent
+sudo install -d -m 0755 /etc/tlsherd
+sudo install -d -m 0700 /var/lib/tlsherd-agent
 sudo install -m 0600 deploy/agent.env /etc/tlsherd/agent.env     # set TLSHERD_SERVER_URL, TLSHERD_CA_FILE
-sudo install -m 0600 deploy/agent.local.cfg /etc/tlsherd-agent/agent.local.cfg  # edit service name etc.
+sudo install -m 0600 deploy/agent.local.cfg /var/lib/tlsherd-agent/agent.local.cfg  # edit service/paths
 sudo install -m 0644 deploy/tlsherd-agent.service /etc/systemd/system/
 # docker-managed services: use deploy/tlsherd-agent-docker.service instead
 sudo systemctl daemon-reload && sudo systemctl enable --now tlsherd-agent
@@ -307,8 +309,7 @@ not drop the message. Default event types for a new account:
 | --- | --- | --- |
 | `TLSHERD_SERVER_URL` | *(required)* | Base URL of the **agent** listener (`…:8444`) |
 | `TLSHERD_CERT_ROOT` | `/etc/tls` | Host cert tree: `<root>/<fqdn>/{current,versions,backups}` |
-| `TLSHERD_STATE_DIR` | `/var/lib/tlsherd-agent` | `state.json`, `config.cfg`, `config.cfg.prev` |
-| `TLSHERD_AGENT_LOCAL_CONFIG` | `/etc/tlsherd-agent/agent.local.cfg` | Local service/install document |
+| `TLSHERD_AGENT_DIR` | `/var/lib/tlsherd-agent` | Agent home: `state.json`, `config.cfg`(+`.prev`), `agent.local.cfg`(+`.prev`) |
 | `TLSHERD_CA_FILE` | — | Extra CA PEM to trust the server certificate |
 | `TLSHERD_LOG_LEVEL` | `info` | Log level |
 
@@ -514,11 +515,11 @@ and restart the service.
 
 *Bad schedule config:* in **Servers → server → Schedule configuration** use **Force from defaults**
 (with confirmation), or fix **Agent defaults**. Agents adopt the new document on the next poll;
-previous schedule is `config.cfg.prev` in the agent state dir.
+previous schedule is `config.cfg.prev` under `TLSHERD_AGENT_DIR`.
 
 *Bad local service config:* edit **Servers → Agent local config** and push, or fix
-`/etc/tlsherd-agent/agent.local.cfg` on the host. The previous push is
-`agent.local.cfg.prev` (copy it back over the active file and restart/reload the agent if needed).
+`$TLSHERD_AGENT_DIR/agent.local.cfg` on the host (default `/var/lib/tlsherd-agent/agent.local.cfg`).
+The previous push is `agent.local.cfg.prev` (copy it back over the active file and restart the agent).
 
 *Compromised agent key or host:* **Servers → server → Revoke all keys** (or **Rotate agent key**),
 then delete the server if the host is gone. Rotate the certificates that host could read.

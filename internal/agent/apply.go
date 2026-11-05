@@ -53,19 +53,28 @@ func (a *Agent) processDomain(ctx context.Context, asg Assignment) error {
 		return fmt.Errorf("invalid assigned fingerprint %q", asg.Fingerprint)
 	}
 	ds := a.state.Domains[asg.FQDN]
-	if ds.Fingerprint == "" {
-		// Lost/new state: reconcile with what is on disk to avoid needless restarts.
-		if fp := installedFingerprint(l, rt.Install.CertName); fp != "" {
-			ds.Fingerprint = fp
-			a.state.Domains[asg.FQDN] = ds
-		}
-	}
-	if ds.Fingerprint == asg.Fingerprint {
-		if ds.StagedFingerprint != "" {
+	// Trust the live install under <cert_root>/<fqdn>/current, not state alone.
+	// state.json can claim a fingerprint while an operator wiped symlinks or
+	// restored older PEMs; skipping then would leave the host forever stale.
+	installed := installedFingerprint(l, rt.Install.CertName)
+	if installed == asg.Fingerprint {
+		if ds.Fingerprint != asg.Fingerprint || ds.StagedFingerprint != "" {
+			ds.Fingerprint = asg.Fingerprint
 			ds.StagedFingerprint = ""
 			a.state.Domains[asg.FQDN] = ds
+			a.saveState()
 		}
+		a.log.Debug("domain already current", "operation", "process", "domain", asg.FQDN, "fingerprint", asg.Fingerprint)
 		return nil
+	}
+	if ds.Fingerprint == asg.Fingerprint && installed != asg.Fingerprint {
+		a.log.Info("state matches assignment but installed files do not; re-applying",
+			"operation", "process", "domain", asg.FQDN, "fingerprint", asg.Fingerprint, "installed", installed)
+		ds.Fingerprint = installed // report/backup previous from disk when known
+		a.state.Domains[asg.FQDN] = ds
+	} else if ds.Fingerprint == "" && installed != "" {
+		ds.Fingerprint = installed
+		a.state.Domains[asg.FQDN] = ds
 	}
 
 	now := a.clock.Now()

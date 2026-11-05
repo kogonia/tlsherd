@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -67,11 +68,15 @@ func LoadServer(getenv func(string) string) (ServerConfig, error) {
 	return cfg, nil
 }
 
+// DefaultAgentDir is the single on-host directory for agent state and configs.
+const DefaultAgentDir = "/var/lib/tlsherd-agent"
+
 type AgentBootstrap struct {
 	ServerURL       string
 	CertRoot        string
-	StateDir        string
-	LocalConfigPath string // agent.local.cfg; default /etc/tlsherd-agent/agent.local.cfg
+	AgentDir        string // state.json, config.cfg, agent.local.cfg (and .prev siblings)
+	StateDir        string // same as AgentDir; kept for callers that name the state tree
+	LocalConfigPath string // AgentDir/agent.local.cfg
 	CAFile          string
 	Once            bool
 	DryRun          bool
@@ -82,11 +87,13 @@ func LoadAgentBootstrap(getenv func(string) string) (AgentBootstrap, error) {
 	if getenv == nil {
 		getenv = os.Getenv
 	}
+	agentDir := envOr(getenv, "TLSHERD_AGENT_DIR", DefaultAgentDir)
 	cfg := AgentBootstrap{
 		ServerURL:       getenv("TLSHERD_SERVER_URL"),
 		CertRoot:        envOr(getenv, "TLSHERD_CERT_ROOT", "/etc/tls"),
-		StateDir:        envOr(getenv, "TLSHERD_STATE_DIR", "/var/lib/tlsherd-agent"),
-		LocalConfigPath: envOr(getenv, "TLSHERD_AGENT_LOCAL_CONFIG", "/etc/tlsherd-agent/agent.local.cfg"),
+		AgentDir:        agentDir,
+		StateDir:        agentDir,
+		LocalConfigPath: filepath.Join(agentDir, "agent.local.cfg"),
 		CAFile:          getenv("TLSHERD_CA_FILE"),
 		LogLevel:        envOr(getenv, "TLSHERD_LOG_LEVEL", "info"),
 	}

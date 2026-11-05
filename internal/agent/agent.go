@@ -64,8 +64,17 @@ type Agent struct {
 
 // New validates options and builds an Agent.
 func New(opts Options) (*Agent, error) {
+	if opts.Bootstrap.AgentDir == "" && opts.Bootstrap.StateDir != "" {
+		opts.Bootstrap.AgentDir = opts.Bootstrap.StateDir
+	}
+	if opts.Bootstrap.StateDir == "" && opts.Bootstrap.AgentDir != "" {
+		opts.Bootstrap.StateDir = opts.Bootstrap.AgentDir
+	}
+	if opts.Bootstrap.LocalConfigPath == "" && opts.Bootstrap.AgentDir != "" {
+		opts.Bootstrap.LocalConfigPath = filepath.Join(opts.Bootstrap.AgentDir, "agent.local.cfg")
+	}
 	if opts.Bootstrap.ServerURL == "" || opts.Bootstrap.CertRoot == "" || opts.Bootstrap.StateDir == "" {
-		return nil, errors.New("agent: server_url, cert_root and state_dir are required")
+		return nil, errors.New("agent: server_url, cert_root and agent_dir are required")
 	}
 	a := &Agent{
 		opts: opts, log: opts.Logger, clock: opts.Clock, runner: opts.Runner,
@@ -209,6 +218,8 @@ func (a *Agent) enroll(ctx context.Context) (time.Duration, error) {
 		}
 		a.state.APIKey = resp.APIKey
 		a.state.ConfigVersion = 0
+		// New server identity: drop prior domain fingerprints so disk is re-checked.
+		a.state.Domains = map[string]DomainState{}
 		if resp.Config != nil {
 			if err := a.adoptConfig(*resp.Config, resp.ConfigVersion); err != nil {
 				a.log.Error("adopt enrolled config; using defaults", "operation", "enroll", "error", err)

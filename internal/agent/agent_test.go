@@ -513,6 +513,35 @@ func TestRestartCommand(t *testing.T) {
 	}
 }
 
+func TestStaleStateReappliesWhenFilesMissing(t *testing.T) {
+	e := newEnv(t)
+	e.seedKey()
+	fp1, b1 := e.srv.addCert(t, testFQDN, inWindowTime.Add(90*24*time.Hour))
+	e.srv.assign(Assignment{FQDN: testFQDN, Fingerprint: fp1})
+	if err := e.run(false); err != nil {
+		t.Fatal(err)
+	}
+	n := e.srv.resultCount()
+	// Operator removes agent-managed tree but leaves state.json claiming fp1.
+	if err := os.RemoveAll(filepath.Join(e.certRoot, testFQDN)); err != nil {
+		t.Fatal(err)
+	}
+	st := e.loadState()
+	if st.Domains[testFQDN].Fingerprint != fp1 {
+		t.Fatal("precondition: state still records fingerprint")
+	}
+	if err := e.run(false); err != nil {
+		t.Fatal(err)
+	}
+	if e.srv.resultCount() != n+1 {
+		t.Fatal("expected re-apply after files disappeared")
+	}
+	got, err := os.ReadFile(filepath.Join(e.certRoot, testFQDN, "current", "fullchain.pem"))
+	if err != nil || string(got) != b1.Cert+b1.Chain {
+		t.Fatalf("files not restored: %v", err)
+	}
+}
+
 func TestLostStateReconcilesWithInstalledFiles(t *testing.T) {
 	e := newEnv(t)
 	e.seedKey()

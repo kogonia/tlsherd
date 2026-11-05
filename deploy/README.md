@@ -5,7 +5,7 @@
 | `server.env` | `/etc/tlsherd/server.env` (0600) | `tlsherd-server` environment |
 | `tlsherd-server.service` | systemd unit | server |
 | `agent.env` | `/etc/tlsherd/agent.env` (0600) | `tlsherd-agent` environment |
-| `agent.local.cfg` | `/etc/tlsherd-agent/agent.local.cfg` (0600) | host service / verify / restart / install |
+| `agent.local.cfg` | `/var/lib/tlsherd-agent/agent.local.cfg` (0600) | host service / verify / restart / install |
 | `tlsherd-agent.service` | systemd unit | agent (systemd restart of local services) |
 | `tlsherd-agent-docker.service` | systemd unit | agent with `docker.sock` for `restart.type=docker` |
 | `docker-compose.yml` | — | server + PostgreSQL |

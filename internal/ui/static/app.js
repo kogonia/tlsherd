@@ -1090,7 +1090,7 @@
       return section('Agent local config (Edit)',
         ...banners,
         h('div', {class: 'banner warn'},
-          'Agent-priority settings on the host (/etc/tlsherd-agent/agent.local.cfg). Saving queues a push on the next poll; the agent keeps one previous version as .prev.'),
+          'Agent-priority settings on the host ($TLSHERD_AGENT_DIR/agent.local.cfg, default /var/lib/tlsherd-agent/). Saving queues a push on the next poll; the agent keeps one previous version as .prev.'),
         h('fieldset', null, h('legend', null, 'Service'),
           field('Service type', svcSel, 'Selecting a service can fill catalog defaults for verify/restart.')),
         h('fieldset', null, h('legend', null, 'Pre-start check (verify)'),
