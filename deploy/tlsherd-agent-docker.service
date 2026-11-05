@@ -1,0 +1,30 @@
+[Unit]
+Description=TLS Herd agent (docker-managed services)
+Documentation=https://github.com/kogonia/tlsherd
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/tlsherd/agent.env
+ExecStart=/usr/local/bin/tlsherd-agent
+Restart=on-failure
+RestartSec=10s
+User=root
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+# Adjust to TLSHERD_CERT_ROOT / TLSHERD_STATE_DIR / TLSHERD_AGENT_LOCAL_CONFIG.
+ReadWritePaths=/etc/tls /var/lib/tlsherd-agent /etc/tlsherd-agent
+StateDirectory=tlsherd-agent
+StateDirectoryMode=0700
+# Needed for `restart.type=docker`: the agent runs `docker restart <name>` (or
+# `docker exec <name> ...` with reload_only + command). Access to docker.sock is
+# root-equivalent on the host; set restart.name in agent.local.cfg.
+SupplementaryGroups=docker
+ReadWritePaths=/var/run/docker.sock
+
+[Install]
+WantedBy=multi-user.target

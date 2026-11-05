@@ -1,0 +1,72 @@
+# TLS herd control plane + PostgreSQL.
+#
+# From the repository root:
+#   export TLSHERD_DB_PASSWORD='choose-a-long-random-password'
+#   # Optional first boot: also set bootstrap credentials (see README).
+#   docker compose -f deploy/docker-compose.yml up -d --build
+#
+# Listeners (host loopback by default — open them if agents/operators are remote):
+#   admin UI/API  https://127.0.0.1:8443  (or http with TLSHERD_INSECURE_HTTP=1)
+#   agent API     https://127.0.0.1:8444
+#
+# Schema is applied only when the Postgres data volume is empty (first start).
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tlsherd
+      POSTGRES_USER: tlsherd
+      POSTGRES_PASSWORD: ${TLSHERD_DB_PASSWORD:?set TLSHERD_DB_PASSWORD}
+    volumes:
+      - tlsherd-pgdata:/var/lib/postgresql/data
+      - ../migrations/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tlsherd -d tlsherd"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - tlsherd
+
+  server:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: tlsherd-server:local
+    restart: unless-stopped
+    # Image defaults to nonroot; root here so the named data volume is writable
+    # on first start. Tighten (match image uid 65532 + chown the volume) in production.
+    user: "0:0"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      TLSHERD_DATABASE_URL: postgres://tlsherd:${TLSHERD_DB_PASSWORD}@postgres:5432/tlsherd?sslmode=disable
+      TLSHERD_ADMIN_LISTEN: ":8443"
+      TLSHERD_AGENT_LISTEN: ":8444"
+      TLSHERD_DATA_DIR: /var/lib/tlsherd
+      TLSHERD_LOG_LEVEL: ${TLSHERD_LOG_LEVEL:-info}
+      # Lab / behind a TLS-terminating proxy. For production HTTPS, mount certs and
+      # unset TLSHERD_INSECURE_HTTP, set TLSHERD_TLS_CERT / TLSHERD_TLS_KEY instead.
+      TLSHERD_INSECURE_HTTP: ${TLSHERD_INSECURE_HTTP:-1}
+      TLSHERD_TLS_CERT: ${TLSHERD_TLS_CERT:-}
+      TLSHERD_TLS_KEY: ${TLSHERD_TLS_KEY:-}
+      TLSHERD_TRUST_PROXY: ${TLSHERD_TRUST_PROXY:-0}
+    ports:
+      - "${TLSHERD_ADMIN_PORT:-127.0.0.1:8443}:8443"
+      - "${TLSHERD_AGENT_PORT:-127.0.0.1:8444}:8444"
+    volumes:
+      - tlsherd-data:/var/lib/tlsherd
+      # Optional host TLS material (when not using insecure HTTP):
+      # - ./certs/server.crt:/etc/tlsherd/server.crt:ro
+      # - ./certs/server.key:/etc/tlsherd/server.key:ro
+    networks:
+      - tlsherd
+
+networks:
+  tlsherd:
+
+volumes:
+  tlsherd-pgdata:
+  tlsherd-data:

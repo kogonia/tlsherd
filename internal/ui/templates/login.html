@@ -1,0 +1,8 @@
+{{define "content"}}
+<form id="login-form" class="card narrow" autocomplete="on">
+  <label>Login <input name="login" autocomplete="username" required autofocus></label>
+  <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+  <p id="login-error" class="error" role="alert" hidden></p>
+  <button type="submit" class="primary">Sign in</button>
+</form>
+{{end}}
