@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/kogonia/tlsherd/internal/certutil"
@@ -21,12 +22,23 @@ const (
 	PartKey   = "key"
 )
 
+// Soft problem codes returned when upload needs confirmation.
+const (
+	CertProblemExpired        = "expired"
+	CertProblemNotYetValid    = "not_yet_valid"
+	CertProblemDomainMismatch = "domain_mismatch"
+)
+
 // UploadInput is a certificate bundle in PEM form.
 type UploadInput struct {
 	CertPEM               []byte
 	KeyPEM                []byte
 	ChainPEM              []byte
 	ConfirmDomainMismatch bool
+	ConfirmExpired        bool
+	ConfirmNotYetValid    bool
+	// ConfirmWarnings acknowledges every soft problem in one shot (UI confirm modal).
+	ConfirmWarnings bool
 }
 
 // UploadResult describes the outcome of UploadCertificate.
@@ -38,8 +50,32 @@ type UploadResult struct {
 	Unchanged bool `json:"unchanged"`
 }
 
-// DomainMismatchError is returned (wrapping domain.ErrDomainMismatch) when the
-// uploaded certificate does not cover the domain and was not confirmed.
+// CertProblem is one soft issue that requires operator confirmation to install.
+type CertProblem struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// CertConfirmationError is returned when the bundle parses but has soft issues
+// (expired, not yet valid, domain mismatch) that were not confirmed.
+type CertConfirmationError struct {
+	Problems           []CertProblem       `json:"problems"`
+	RequestedDomain    string              `json:"requested_domain"`
+	UploadedSANs       []string            `json:"uploaded_sans"`
+	UploadedCN         string              `json:"uploaded_cn"`
+	NotBefore          time.Time           `json:"not_before"`
+	NotAfter           time.Time           `json:"not_after"`
+	CurrentCertificate *domain.Certificate `json:"current_certificate,omitempty"`
+}
+
+func (e *CertConfirmationError) Error() string {
+	return domain.ErrConfirmRequired.Error()
+}
+
+func (e *CertConfirmationError) Unwrap() error { return domain.ErrConfirmRequired }
+
+// DomainMismatchError is kept for API/test compatibility; new uploads use
+// CertConfirmationError. It still unwraps to ErrDomainMismatch.
 type DomainMismatchError struct {
 	RequestedDomain    string              `json:"requested_domain"`
 	UploadedSANs       []string            `json:"uploaded_sans"`
@@ -62,9 +98,9 @@ type CertVersion struct {
 // UploadCertificate validates a PEM bundle and makes it the current
 // certificate of the domain (new version). Requires can_write_certs.
 //
-// A certificate that does not cover the domain is rejected with
-// *DomainMismatchError unless ConfirmDomainMismatch is set; a confirmed
-// mismatch is recorded as an event naming the actor.
+// Soft issues (expired, not yet valid, domain not covered) require confirmation
+// flags or ConfirmWarnings; otherwise *CertConfirmationError is returned.
+// Confirmed soft issues are recorded as events naming the actor.
 func (s *Services) UploadCertificate(ctx context.Context, actor *domain.User, domainID uuid.UUID, in UploadInput) (*UploadResult, error) {
 	if err := s.requireDomainPerm(ctx, actor, domainID, permWriteCerts); err != nil {
 		return nil, err
@@ -100,14 +136,45 @@ func (s *Services) UploadCertificate(ctx context.Context, actor *domain.User, do
 	default:
 		return nil, fmt.Errorf("upload certificate: %w", err)
 	}
-	if !covers && !in.ConfirmDomainMismatch {
-		return nil, &DomainMismatchError{
+
+	confirmExpired := in.ConfirmWarnings || in.ConfirmExpired
+	confirmNotYet := in.ConfirmWarnings || in.ConfirmNotYetValid
+	confirmMismatch := in.ConfirmWarnings || in.ConfirmDomainMismatch
+
+	var problems []CertProblem
+	if parsed.Expired && !confirmExpired {
+		problems = append(problems, CertProblem{
+			Code: CertProblemExpired,
+			Message: fmt.Sprintf("certificate expired at %s",
+				parsed.NotAfter.Format(time.RFC3339)),
+		})
+	}
+	if parsed.NotYetValid && !confirmNotYet {
+		problems = append(problems, CertProblem{
+			Code: CertProblemNotYetValid,
+			Message: fmt.Sprintf("certificate not valid until %s",
+				parsed.NotBefore.Format(time.RFC3339)),
+		})
+	}
+	if !covers && !confirmMismatch {
+		problems = append(problems, CertProblem{
+			Code: CertProblemDomainMismatch,
+			Message: fmt.Sprintf("certificate does not cover domain %q (CN=%q SANs=%v)",
+				d.FQDN, parsed.SubjectCN, parsed.SANs),
+		})
+	}
+	if len(problems) > 0 {
+		return nil, &CertConfirmationError{
+			Problems:           problems,
 			RequestedDomain:    d.FQDN,
 			UploadedSANs:       parsed.SANs,
 			UploadedCN:         parsed.SubjectCN,
+			NotBefore:          parsed.NotBefore,
+			NotAfter:           parsed.NotAfter,
 			CurrentCertificate: current,
 		}
 	}
+
 	if current != nil && current.FingerprintSHA256 == parsed.Fingerprint {
 		return &UploadResult{Certificate: current, DomainCertificate: curDC, Unchanged: true}, nil
 	}
@@ -139,6 +206,7 @@ func (s *Services) UploadCertificate(ctx context.Context, actor *domain.User, do
 		ActivatedBy: actorID(actor),
 		Reason:      "upload",
 	}
+	now := s.now()
 	err = s.Store.Tx(ctx, func(tx store.Store) error {
 		if err := tx.UpsertCertificate(ctx, cert); err != nil {
 			return err
@@ -160,6 +228,32 @@ func (s *Services) UploadCertificate(ctx context.Context, actor *domain.User, do
 				return err
 			}
 		}
+		if parsed.Expired {
+			if err := s.emit(ctx, tx, &domain.Event{
+				Type: EvCertExpiredUploadOK, Severity: SeverityWarning,
+				DomainID: &d.ID, CertificateID: &cert.ID, ActorUserID: actorID(actor),
+				Message: fmt.Sprintf("expired certificate (not_after %s) confirmed for %s by %s",
+					parsed.NotAfter.Format(time.RFC3339), d.FQDN, actor.Login),
+				Details: jsonDetails(map[string]any{
+					"not_after": parsed.NotAfter, "fingerprint": cert.FingerprintSHA256, "actor": actor.Login,
+				}),
+			}); err != nil {
+				return err
+			}
+		}
+		if parsed.NotYetValid {
+			if err := s.emit(ctx, tx, &domain.Event{
+				Type: EvCertNotYetValidUploadOK, Severity: SeverityWarning,
+				DomainID: &d.ID, CertificateID: &cert.ID, ActorUserID: actorID(actor),
+				Message: fmt.Sprintf("not-yet-valid certificate (not_before %s) confirmed for %s by %s",
+					parsed.NotBefore.Format(time.RFC3339), d.FQDN, actor.Login),
+				Details: jsonDetails(map[string]any{
+					"not_before": parsed.NotBefore, "fingerprint": cert.FingerprintSHA256, "actor": actor.Login,
+				}),
+			}); err != nil {
+				return err
+			}
+		}
 		chainKey := DedupKey(EvCertChainInvalid, d.ID.String())
 		if parsed.ChainWarning != "" {
 			if err := s.emit(ctx, tx, &domain.Event{
@@ -173,17 +267,38 @@ func (s *Services) UploadCertificate(ctx context.Context, actor *domain.User, do
 		} else if err := s.resolve(ctx, tx, chainKey, "upload"); err != nil {
 			return err
 		}
-		for _, t := range []string{EvCertExpired, EvCertExpiringSoon, EvCertKeyMismatch, EvCertUploadRejected} {
+		for _, t := range []string{EvCertKeyMismatch, EvCertUploadRejected} {
 			if err := s.resolve(ctx, tx, DedupKey(t, d.ID.String()), "upload"); err != nil {
 				return err
 			}
-			// Clear legacy open rows that were emitted without a dedup_key.
 			if err := s.resolveTypeDomain(ctx, tx, t, d.ID, "upload"); err != nil {
 				return err
 			}
 		}
+		// Only clear expiry/soon events when the new cert is actually OK for that state.
+		if !parsed.Expired {
+			if err := s.resolve(ctx, tx, DedupKey(EvCertExpired, d.ID.String()), "upload"); err != nil {
+				return err
+			}
+			if err := s.resolveTypeDomain(ctx, tx, EvCertExpired, d.ID, "upload"); err != nil {
+				return err
+			}
+		}
+		soon := s.monitorSettings(ctx).ExpiringSoon
+		if !parsed.Expired && parsed.NotAfter.Sub(now) > soon {
+			if err := s.resolve(ctx, tx, DedupKey(EvCertExpiringSoon, d.ID.String()), "upload"); err != nil {
+				return err
+			}
+			if err := s.resolveTypeDomain(ctx, tx, EvCertExpiringSoon, d.ID, "upload"); err != nil {
+				return err
+			}
+		}
 		return s.audit(ctx, tx, actor, "certificate.upload", "domain", d.ID.String(), map[string]any{
-			"fingerprint": cert.FingerprintSHA256, "version": dc.Version, "domain_mismatch_confirmed": !covers,
+			"fingerprint":               cert.FingerprintSHA256,
+			"version":                   dc.Version,
+			"domain_mismatch_confirmed": !covers,
+			"expired_confirmed":         parsed.Expired,
+			"not_yet_valid_confirmed":   parsed.NotYetValid,
 		})
 	})
 	if err != nil {

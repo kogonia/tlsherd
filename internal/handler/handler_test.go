@@ -143,6 +143,7 @@ func TestFailMapping(t *testing.T) {
 		{domain.ErrKeyCertMismatch, 422, "key_mismatch"},
 		{domain.ErrIdentityMismatch, 401, "identity_mismatch"},
 		{&service.DomainMismatchError{RequestedDomain: "a.example"}, 409, "domain_mismatch"},
+		{&service.CertConfirmationError{Problems: []service.CertProblem{{Code: "expired", Message: "expired"}}}, 409, "confirmation_required"},
 	}
 	for _, tc := range cases {
 		rec := httptest.NewRecorder()

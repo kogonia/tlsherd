@@ -36,6 +36,10 @@ type Parsed struct {
 	KeyPEM       []byte
 	ChainPEM     []byte
 	ChainWarning string
+	// Soft validity flags: ParseBundle does not reject these; callers may
+	// require explicit confirmation before installing.
+	Expired     bool
+	NotYetValid bool
 }
 
 func ParseBundle(certPEM, keyPEM, chainPEM []byte, now time.Time) (*Parsed, error) {
@@ -59,12 +63,8 @@ func ParseBundle(certPEM, keyPEM, chainPEM []byte, now time.Time) (*Parsed, erro
 	if err := keysMatch(leaf, key); err != nil {
 		return nil, err
 	}
-	if leaf.NotAfter.Before(now) {
-		return nil, fmt.Errorf("certificate expired at %s", leaf.NotAfter.UTC())
-	}
-	if leaf.NotBefore.After(now.Add(24 * time.Hour)) {
-		return nil, fmt.Errorf("certificate not valid until %s", leaf.NotBefore.UTC())
-	}
+	expired := leaf.NotAfter.Before(now)
+	notYet := leaf.NotBefore.After(now.Add(24 * time.Hour))
 	fp := Fingerprint(leaf.Raw)
 	sans := collectSANs(leaf)
 	algo, bits := keyInfo(key)
@@ -91,6 +91,8 @@ func ParseBundle(certPEM, keyPEM, chainPEM []byte, now time.Time) (*Parsed, erro
 		KeyPEM:       keyPEM,
 		ChainPEM:     encodeCertsPEM(chain),
 		ChainWarning: warn,
+		Expired:      expired,
+		NotYetValid:  notYet,
 	}, nil
 }
 

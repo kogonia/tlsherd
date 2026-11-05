@@ -784,7 +784,7 @@
           field('Certificate (PEM)', h('input', {type: 'file', name: 'cert', required: true, accept: '.pem,.crt,.cer'})),
           field('Private key (PEM)', h('input', {type: 'file', name: 'key', required: true, accept: '.pem,.key'})),
           field('Chain (PEM, optional)', h('input', {type: 'file', name: 'chain', accept: '.pem,.crt,.cer'}))),
-        h('p', {class: 'help'}, 'Each file up to 128 KiB, 1 MiB per request. The key must match the certificate. A certificate that does not cover this domain needs explicit confirmation.'),
+        h('p', {class: 'help'}, 'Each file up to 128 KiB, 1 MiB per request. The key must match. Expired, not-yet-valid, or domain-mismatch certificates need explicit confirmation.'),
         h('p', null, h('button', {type: 'submit', class: 'primary'}, 'Upload new version')));
       form.addEventListener('submit', async (ev) => {
         ev.preventDefault();
@@ -798,13 +798,24 @@
           try {
             await send();
           } catch (e) {
-            if (!(e instanceof ApiError) || e.code !== 'domain_mismatch') throw e;
+            if (!(e instanceof ApiError) || (e.code !== 'confirmation_required' && e.code !== 'domain_mismatch')) throw e;
             const dt = e.details || {};
-            const msg = 'The certificate does not cover ' + (dt.requested_domain || 'this domain') + '.\n' +
-              'CN: ' + (dt.uploaded_cn || '—') + '\nSANs: ' + ((dt.uploaded_sans || []).join(', ') || '—') +
-              '\n\nInstall it anyway?';
+            const problems = dt.problems || [];
+            let msg;
+            if (problems.length) {
+              msg = 'This certificate has issues that need confirmation:\n\n' +
+                problems.map((p) => '• ' + (p.message || p.code)).join('\n') +
+                '\n\nInstall it anyway?';
+            } else {
+              msg = 'The certificate does not cover ' + (dt.requested_domain || 'this domain') + '.\n' +
+                'CN: ' + (dt.uploaded_cn || '—') + '\nSANs: ' + ((dt.uploaded_sans || []).join(', ') || '—') +
+                '\n\nInstall it anyway?';
+            }
             if (!confirm(msg)) return;
+            fd.set('confirm_warnings', 'true');
             fd.set('confirm_domain_mismatch', 'true');
+            fd.set('confirm_expired', 'true');
+            fd.set('confirm_not_yet_valid', 'true');
             await send();
           }
           toast(res.unchanged ? 'Certificate already current; nothing changed' : 'Uploaded version ' + res.domain_certificate.version, 'ok');
@@ -1138,6 +1149,7 @@
     const state = {type: '', unresolved: true, limit: 100, offset: 0};
     const out = h('div', null);
     const types = ['', 'cert_expired', 'cert_expiring_soon', 'cert_key_mismatch', 'cert_chain_invalid', 'cert_domain_mismatch_confirmed',
+      'cert_expired_upload_confirmed', 'cert_not_yet_valid_upload_confirmed',
       'cert_upload_rejected', 'cert_rollback_performed', 'agent_enroll_pending', 'agent_accepted', 'agent_rejected', 'agent_identity_mismatch',
       'agent_offline', 'agent_apply_failed', 'agent_verify_failed', 'agent_post_check_mismatch', 'agent_config_updated',
       'endpoint_down', 'endpoint_cert_mismatch', 'domain_ungrouped'];

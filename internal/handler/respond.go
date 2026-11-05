@@ -88,8 +88,25 @@ func intQuery(r *http.Request, name string, def, maxV int) int {
 // fail maps a service error to an HTTP response. Details of unexpected errors
 // are logged, never returned.
 func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
+	var confirm *service.CertConfirmationError
 	var mismatch *service.DomainMismatchError
 	switch {
+	case errors.As(err, &confirm):
+		writeJSON(w, http.StatusConflict, errorBody{Error: errorPayload{
+			Code:    "confirmation_required",
+			Message: "certificate has issues that need confirmation",
+			Details: map[string]any{
+				"problems":            confirm.Problems,
+				"requested_domain":    confirm.RequestedDomain,
+				"uploaded_sans":       confirm.UploadedSANs,
+				"uploaded_cn":         confirm.UploadedCN,
+				"not_before":          confirm.NotBefore,
+				"not_after":           confirm.NotAfter,
+				"current_certificate": confirm.CurrentCertificate,
+				"hint":                "repeat the upload with confirm_warnings=true (or per-issue flags) to install it anyway",
+			},
+		}})
+		return
 	case errors.As(err, &mismatch):
 		writeJSON(w, http.StatusConflict, errorBody{Error: errorPayload{
 			Code:    "domain_mismatch",

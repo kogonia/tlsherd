@@ -166,11 +166,24 @@ func (h *Handler) uploadCertificate(w http.ResponseWriter, r *http.Request, u *d
 			return
 		}
 	}
-	if v := r.FormValue("confirm_domain_mismatch"); v != "" {
-		if in.ConfirmDomainMismatch, err = strconv.ParseBool(v); err != nil {
-			h.badRequest(w, "confirm_domain_mismatch must be a boolean")
-			return
+	boolForm := func(name string, dst *bool) bool {
+		v := r.FormValue(name)
+		if v == "" {
+			return true
 		}
+		parsed, err := strconv.ParseBool(v)
+		if err != nil {
+			h.badRequest(w, name+" must be a boolean")
+			return false
+		}
+		*dst = parsed
+		return true
+	}
+	if !boolForm("confirm_domain_mismatch", &in.ConfirmDomainMismatch) ||
+		!boolForm("confirm_expired", &in.ConfirmExpired) ||
+		!boolForm("confirm_not_yet_valid", &in.ConfirmNotYetValid) ||
+		!boolForm("confirm_warnings", &in.ConfirmWarnings) {
+		return
 	}
 	res, err := h.svc.UploadCertificate(r.Context(), u, id, in)
 	if err != nil {

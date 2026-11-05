@@ -30,7 +30,8 @@ var DefaultNotificationEventTypes = []string{
 func KnownEventTypes() []string {
 	return []string{
 		EvCertExpired, EvCertExpiringSoon, EvCertKeyMismatch, EvCertChainInvalid,
-		EvCertDomainMismatchOK, EvCertUploadRejected, EvCertRollback,
+		EvCertDomainMismatchOK, EvCertExpiredUploadOK, EvCertNotYetValidUploadOK,
+		EvCertUploadRejected, EvCertRollback,
 		EvAgentEnrollPending, EvAgentAccepted, EvAgentRejected, EvAgentIdentityMismatch,
 		EvAgentOffline, EvAgentApplyFailed, EvAgentVerifyFailed, EvAgentPostCheckMismatch,
 		EvAgentConfigUpdated, EvEndpointDown, EvEndpointCertMismatch, EvDomainUngrouped,
