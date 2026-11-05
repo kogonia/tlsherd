@@ -82,11 +82,34 @@ func TestAuthRedirectAndRoles(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("operator domains = %d", rec.Code)
 	}
-	if strings.Contains(rec.Body.String(), `href="/users"`) {
+	body := rec.Body.String()
+	if !strings.Contains(body, `id="sidebar"`) {
+		t.Error("missing sidebar")
+	}
+	if !strings.Contains(body, `<a class="brand" href="/">TLS herd</a>`) {
+		t.Error("missing brand → Dashboard link")
+	}
+	if strings.Contains(body, `href="/users"`) {
 		t.Error("operator nav shows admin entries")
 	}
-	if !strings.Contains(get(h, "/domains", "admin-token").Body.String(), `href="/users"`) {
+	if strings.Contains(body, `>Dashboard</`) || strings.Contains(body, `nav-text">Dashboard`) {
+		t.Error("Dashboard must not appear in sidebar nav")
+	}
+	if !strings.Contains(body, `nav-group-label">Fleet`) || !strings.Contains(body, `nav-group-label">Health`) {
+		t.Error("operator sidebar missing Fleet/Health groups")
+	}
+	if strings.Contains(body, `nav-group-label">Access`) || strings.Contains(body, `nav-group-label">Settings`) {
+		t.Error("operator sidebar shows empty admin groups")
+	}
+	adminBody := get(h, "/domains", "admin-token").Body.String()
+	if !strings.Contains(adminBody, `href="/users"`) {
 		t.Error("admin nav lacks Users")
+	}
+	if !strings.Contains(adminBody, `nav-group-label">Access`) || !strings.Contains(adminBody, `nav-group-label">Settings`) {
+		t.Error("admin sidebar missing Access/Settings groups")
+	}
+	if strings.Contains(adminBody, `nav-text">Dashboard`) {
+		t.Error("Dashboard must not appear in admin sidebar")
 	}
 }
 

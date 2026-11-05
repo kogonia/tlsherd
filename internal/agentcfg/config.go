@@ -31,7 +31,7 @@ type Config struct {
 type MaintenanceWindow struct {
 	TZ   string `json:"tz"`
 	Days []int  `json:"days"` // 1=Mon .. 7=Sun
-	From string `json:"from"` // HH:MM
+	From string `json:"from"` // HH:MM; from==to means all day (e.g. 00:00–00:00)
 	To   string `json:"to"`
 }
 
@@ -104,8 +104,8 @@ func Default() Config {
 		MaintenanceWindow: MaintenanceWindow{
 			TZ:   "UTC",
 			Days: []int{1, 2, 3, 4, 5, 6, 7},
-			From: "02:00",
-			To:   "04:00",
+			From: "00:00",
+			To:   "00:00", // equal endpoints = whole day (24:00 is not valid here)
 		},
 		UrgentThreshold:    Duration(72 * time.Hour),
 		StageOutsideWindow: true,

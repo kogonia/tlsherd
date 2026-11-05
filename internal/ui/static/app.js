@@ -1723,6 +1723,92 @@
       section('Destinations', destBox));
   };
 
+  // -------------------------------------------------------------- nav
+
+  const NAV_PIN_KEY = 'tlsherd.nav.pinned';
+  const NAV_COLLAPSE_KEY = 'tlsherd.nav.collapsed';
+
+  function initNav() {
+    const sidebar = document.getElementById('sidebar');
+    if (!sidebar) return;
+
+    const pinBtn = document.getElementById('nav-pin');
+    const collapseBtn = document.getElementById('nav-collapse');
+    const menuBtn = document.getElementById('nav-menu');
+    const backdrop = document.getElementById('nav-backdrop');
+
+    function pinned() {
+      return localStorage.getItem(NAV_PIN_KEY) === '1';
+    }
+    function collapsedPref() {
+      const v = localStorage.getItem(NAV_COLLAPSE_KEY);
+      if (v === null) return true; // first visit: collapsed
+      return v === '1';
+    }
+    function apply() {
+      const isPinned = pinned();
+      const isCollapsed = isPinned ? false : collapsedPref();
+      document.body.classList.toggle('nav-pinned', isPinned);
+      document.body.classList.toggle('nav-collapsed', isCollapsed);
+      if (pinBtn) {
+        pinBtn.setAttribute('aria-pressed', isPinned ? 'true' : 'false');
+        pinBtn.textContent = isPinned ? 'Pinned' : 'Pin';
+      }
+      if (collapseBtn) {
+        collapseBtn.setAttribute('aria-label', isCollapsed ? 'Expand sidebar' : 'Collapse sidebar');
+        collapseBtn.title = isCollapsed ? 'Expand' : 'Collapse';
+      }
+    }
+    function setOpen(open) {
+      document.body.classList.toggle('nav-open', open);
+      if (menuBtn) menuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (backdrop) backdrop.hidden = !open;
+    }
+
+    apply();
+    setOpen(false);
+
+    if (collapseBtn) {
+      collapseBtn.addEventListener('click', () => {
+        if (pinned()) {
+          localStorage.removeItem(NAV_PIN_KEY);
+          localStorage.setItem(NAV_COLLAPSE_KEY, '1');
+        } else if (collapsedPref()) {
+          localStorage.setItem(NAV_COLLAPSE_KEY, '0');
+        } else {
+          localStorage.setItem(NAV_COLLAPSE_KEY, '1');
+        }
+        apply();
+      });
+    }
+    if (pinBtn) {
+      pinBtn.addEventListener('click', () => {
+        if (pinned()) {
+          localStorage.removeItem(NAV_PIN_KEY);
+          localStorage.setItem(NAV_COLLAPSE_KEY, '1');
+        } else {
+          localStorage.setItem(NAV_PIN_KEY, '1');
+          localStorage.setItem(NAV_COLLAPSE_KEY, '0');
+        }
+        apply();
+      });
+    }
+    if (menuBtn) {
+      menuBtn.addEventListener('click', () => {
+        setOpen(!document.body.classList.contains('nav-open'));
+      });
+    }
+    if (backdrop) {
+      backdrop.addEventListener('click', () => setOpen(false));
+    }
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape') setOpen(false);
+    });
+    sidebar.querySelectorAll('a.nav-link').forEach((a) => {
+      a.addEventListener('click', () => setOpen(false));
+    });
+  }
+
   // -------------------------------------------------------------- boot
 
   document.body.addEventListener('htmx:configRequest', (ev) => {
@@ -1733,6 +1819,7 @@
   });
 
   async function boot() {
+    initNav();
     const run = pages[PAGE];
     if (!run) return;
     const root = document.getElementById('view');

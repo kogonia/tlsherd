@@ -28,8 +28,8 @@ import (
 const testFQDN = "app.example.com"
 
 var (
-	inWindowTime  = time.Date(2026, 11, 4, 3, 0, 0, 0, time.UTC)  // inside default 02:00-04:00
-	outWindowTime = time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC) // outside
+	inWindowTime  = time.Date(2026, 11, 4, 3, 0, 0, 0, time.UTC)  // inside testConfig 02:00-04:00
+	outWindowTime = time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC) // outside testConfig window
 )
 
 type fakeClock struct{ t time.Time }
@@ -243,6 +243,9 @@ type env struct {
 
 func testConfig() agentcfg.Config {
 	cfg := agentcfg.Default()
+	// Narrow window so outWindowTime exercises staging-outside-window paths.
+	cfg.MaintenanceWindow.From = "02:00"
+	cfg.MaintenanceWindow.To = "04:00"
 	cfg.Verify.Command = []string{"nginx", "-t"}
 	cfg.Verify.Timeout = agentcfg.Duration(5 * time.Second)
 	cfg.Restart = agentcfg.Restart{Type: "systemd", Name: "nginx"}

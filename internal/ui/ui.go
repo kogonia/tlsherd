@@ -46,10 +46,17 @@ type Sessions interface {
 }
 
 type navItem struct {
-	Label     string
-	Href      string
-	Page      string
-	AdminOnly bool
+	Label      string
+	Href       string
+	Page       string   // primary page name for this entry
+	MatchPages []string // page names that mark this item active (details)
+	AdminOnly  bool
+	Abbr       string // short label when sidebar is collapsed
+}
+
+type navGroup struct {
+	Label string
+	Items []navItem
 }
 
 // page describes one server-rendered shell.
@@ -80,27 +87,68 @@ var pages = []page{
 	{Path: "/account", Name: "account", Title: "Account"},
 }
 
-var nav = []navItem{
-	{Label: "Dashboard", Href: "/", Page: "dashboard"},
-	{Label: "Enrollments", Href: "/enrollments", Page: "enrollments", AdminOnly: true},
-	{Label: "Domains", Href: "/domains", Page: "domains"},
-	{Label: "Servers", Href: "/servers", Page: "servers"},
-	{Label: "Monitor", Href: "/monitor", Page: "monitor"},
-	{Label: "Events", Href: "/events", Page: "events"},
-	{Label: "Groups", Href: "/groups", Page: "groups", AdminOnly: true},
-	{Label: "Users", Href: "/users", Page: "users", AdminOnly: true},
-	{Label: "Notification accounts", Href: "/notification-accounts", Page: "notify-accounts", AdminOnly: true},
-	{Label: "Notifications", Href: "/settings/notifications", Page: "notify-settings", AdminOnly: true},
-	{Label: "Agent defaults", Href: "/settings/agent-defaults", Page: "defaults", AdminOnly: true},
+// navGroups is the sidebar IA. Dashboard is the brand link in the header only.
+var navGroups = []navGroup{
+	{Label: "Fleet", Items: []navItem{
+		{Label: "Domains", Href: "/domains", Page: "domains", MatchPages: []string{"domains", "domain"}, Abbr: "Dom"},
+		{Label: "Servers", Href: "/servers", Page: "servers", MatchPages: []string{"servers", "server"}, Abbr: "Srv"},
+		{Label: "Enrollments", Href: "/enrollments", Page: "enrollments", Abbr: "Enr", AdminOnly: true},
+	}},
+	{Label: "Health", Items: []navItem{
+		{Label: "Monitor", Href: "/monitor", Page: "monitor", Abbr: "Mon"},
+		{Label: "Events", Href: "/events", Page: "events", Abbr: "Evt"},
+	}},
+	{Label: "Access", Items: []navItem{
+		{Label: "Groups", Href: "/groups", Page: "groups", Abbr: "Grp", AdminOnly: true},
+		{Label: "Users", Href: "/users", Page: "users", Abbr: "Usr", AdminOnly: true},
+	}},
+	{Label: "Settings", Items: []navItem{
+		{Label: "Agent defaults", Href: "/settings/agent-defaults", Page: "defaults", Abbr: "Def", AdminOnly: true},
+		{Label: "Notifications", Href: "/settings/notifications", Page: "notify-settings", Abbr: "Ntf", AdminOnly: true},
+		{Label: "Notification accounts", Href: "/notification-accounts", Page: "notify-accounts",
+			MatchPages: []string{"notify-accounts", "notify-account", "notify-account-new"}, Abbr: "Acc", AdminOnly: true},
+	}},
 }
 
 type pageData struct {
-	Title   string
-	Page    string
-	ID      string
-	User    *domain.User
-	IsAdmin bool
-	Nav     []navItem
+	Title     string
+	Page      string
+	ID        string
+	User      *domain.User
+	IsAdmin   bool
+	NavGroups []navGroup
+}
+
+// IsActive reports whether page matches this nav entry (for templates).
+func (n navItem) IsActive(page string) bool {
+	if page == n.Page {
+		return true
+	}
+	for _, p := range n.MatchPages {
+		if p == page {
+			return true
+		}
+	}
+	return false
+}
+
+// filterNavGroups returns groups with AdminOnly items removed for non-admins
+// and empty groups dropped.
+func filterNavGroups(isAdmin bool) []navGroup {
+	out := make([]navGroup, 0, len(navGroups))
+	for _, g := range navGroups {
+		items := make([]navItem, 0, len(g.Items))
+		for _, n := range g.Items {
+			if !n.AdminOnly || isAdmin {
+				items = append(items, n)
+			}
+		}
+		if len(items) == 0 {
+			continue
+		}
+		out = append(out, navGroup{Label: g.Label, Items: items})
+	}
+	return out
 }
 
 // UI is the web UI handler.
@@ -203,7 +251,10 @@ func (u *UI) pageHandler(p page) http.HandlerFunc {
 			http.Error(w, "forbidden: administrators only", http.StatusForbidden)
 			return
 		}
-		data := pageData{Title: p.Title, Page: p.Name, User: user, IsAdmin: isAdmin}
+		data := pageData{
+			Title: p.Title, Page: p.Name, User: user, IsAdmin: isAdmin,
+			NavGroups: filterNavGroups(isAdmin),
+		}
 		if p.HasID {
 			id, err := uuid.Parse(r.PathValue("id"))
 			if err != nil {
@@ -211,11 +262,6 @@ func (u *UI) pageHandler(p page) http.HandlerFunc {
 				return
 			}
 			data.ID = id.String()
-		}
-		for _, n := range nav {
-			if !n.AdminOnly || isAdmin {
-				data.Nav = append(data.Nav, n)
-			}
 		}
 		u.render(w, r, p.Name, data)
 	}

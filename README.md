@@ -440,7 +440,7 @@ These fields stay server-authoritative (local config does **not** own them):
 | `enroll_interval` | How often a not-yet-accepted agent retries enroll | `1m` |
 | `poll_interval` | How often an accepted agent polls | `12h` |
 | `jitter` | ± fraction applied to intervals (`0`–`1`) | `0.1` |
-| `maintenance_window` | `tz`, `days` (1=Mon…7=Sun), `from`/`to` (`HH:MM`) | UTC nightly window |
+| `maintenance_window` | `tz`, `days` (1=Mon…7=Sun), `from`/`to` (`HH:MM`; equal = all day) | UTC all day (`00:00`–`00:00`) |
 | `urgent_threshold` | Apply outside the window if installed cert expires sooner | `72h` |
 | `stage_outside_window` | Download/stage new certs outside the window without activating | `true` |
 | `strict_cert_check` | Refuse install/reload when cert is expired, not yet valid, or critically broken | `true` |
