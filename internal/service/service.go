@@ -287,8 +287,28 @@ func DedupKey(eventType, entityID string) string {
 	return eventType + ":" + entityID
 }
 
-// EmitEvent records an event. With ev.DedupKey set, at most one unresolved
-// event per key exists; repeated emits refresh the open one.
+// instantEventTypes are point-in-time records (already resolved). They must not
+// stay in the open-events queue waiting for dismiss/resolve.
+var instantEventTypes = map[string]struct{}{
+	EvAgentAccepted:           {},
+	EvAgentRejected:           {},
+	EvAgentConfigUpdated:      {},
+	EvCertRollback:            {},
+	EvCertUploadRejected:      {},
+	EvCertDomainMismatchOK:    {},
+	EvCertExpiredUploadOK:     {},
+	EvCertNotYetValidUploadOK: {},
+}
+
+// IsInstantEvent reports whether typ is a point-in-time event (no open lifecycle).
+func IsInstantEvent(typ string) bool {
+	_, ok := instantEventTypes[typ]
+	return ok
+}
+
+// EmitEvent records an event. Instant types are stored already-resolved.
+// With a DedupKey on an open type, at most one unresolved event per key exists;
+// repeated emits refresh the open one.
 func (s *Services) EmitEvent(ctx context.Context, ev *domain.Event) error {
 	return s.emit(ctx, s.Store, ev)
 }
@@ -302,6 +322,13 @@ func (s *Services) emit(ctx context.Context, st store.Store, ev *domain.Event) e
 	}
 	if len(ev.Details) == 0 {
 		ev.Details = []byte("{}")
+	}
+	if IsInstantEvent(ev.Type) {
+		if err := st.InsertInstantEvent(ctx, ev); err != nil {
+			return fmt.Errorf("emit event %s: %w", ev.Type, err)
+		}
+		s.notifyFanout(ctx, st, ev, domain.NotifyKindOpened)
+		return nil
 	}
 	inserted, err := st.UpsertOpenEvent(ctx, ev)
 	if err != nil {

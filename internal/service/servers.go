@@ -20,6 +20,13 @@ type ServerView struct {
 	Label     string      `json:"label"` // display_name or IP
 	KeyPrefix string      `json:"key_prefix,omitempty"`
 	DomainIDs []uuid.UUID `json:"domain_ids"`
+	// Problems summarizes open alarms for the list/detail pages.
+	OpenEvents         int      `json:"open_events"`
+	OpenCritical       int      `json:"open_critical"`
+	OpenWarning        int      `json:"open_warning"`
+	OpenEventTypes     []string `json:"open_event_types,omitempty"`
+	MaxEventSeverity   string   `json:"max_event_severity,omitempty"`
+	EndpointsUnhealthy int      `json:"endpoints_unhealthy"`
 }
 
 // EffectiveConfig is the agent configuration a server actually runs with.
@@ -92,6 +99,14 @@ func (s *Services) ListServers(ctx context.Context, actor *domain.User) ([]Serve
 	if err != nil {
 		return nil, fmt.Errorf("list servers: %w", err)
 	}
+	openByServer, err := s.Store.CountOpenEventsByServer(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list servers: %w", err)
+	}
+	unhealthyByServer, err := s.Store.CountUnhealthyEndpointsByServer(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list servers: %w", err)
+	}
 	var visible map[uuid.UUID]struct{}
 	if !isAdmin(actor) {
 		ids, err := s.Authz.VisibleDomainIDs(ctx, actor)
@@ -109,6 +124,14 @@ func (s *Services) ListServers(ctx context.Context, actor *domain.User) ([]Serve
 		if err != nil {
 			return nil, fmt.Errorf("list servers: %w", err)
 		}
+		if c, ok := openByServer[sv.ID]; ok {
+			v.OpenEvents = c.Total
+			v.OpenCritical = c.Critical
+			v.OpenWarning = c.Warning
+			v.OpenEventTypes = c.Types
+			v.MaxEventSeverity = c.MaxSeverity
+		}
+		v.EndpointsUnhealthy = unhealthyByServer[sv.ID]
 		if visible != nil {
 			ok := false
 			for _, did := range v.DomainIDs {
@@ -137,6 +160,22 @@ func (s *Services) GetServer(ctx context.Context, actor *domain.User, id uuid.UU
 	}
 	v, err := s.serverView(ctx, *sv)
 	if err != nil {
+		return nil, fmt.Errorf("get server: %w", err)
+	}
+	if openByServer, err := s.Store.CountOpenEventsByServer(ctx); err == nil {
+		if c, ok := openByServer[id]; ok {
+			v.OpenEvents = c.Total
+			v.OpenCritical = c.Critical
+			v.OpenWarning = c.Warning
+			v.OpenEventTypes = c.Types
+			v.MaxEventSeverity = c.MaxSeverity
+		}
+	} else {
+		return nil, fmt.Errorf("get server: %w", err)
+	}
+	if unhealthy, err := s.Store.CountUnhealthyEndpointsByServer(ctx); err == nil {
+		v.EndpointsUnhealthy = unhealthy[id]
+	} else {
 		return nil, fmt.Errorf("get server: %w", err)
 	}
 	return v, nil

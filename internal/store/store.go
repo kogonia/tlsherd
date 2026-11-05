@@ -119,6 +119,12 @@ type Store interface {
 	// Events / audit / settings
 	// UpsertOpenEvent inserts or refreshes an open event. inserted is true only for a new row.
 	UpsertOpenEvent(ctx context.Context, e *domain.Event) (inserted bool, err error)
+	// InsertInstantEvent inserts a point-in-time event that is already resolved (no open lifecycle).
+	InsertInstantEvent(ctx context.Context, e *domain.Event) error
+	// CountOpenEventsByServer returns open-event counts and distinct types per server_id.
+	CountOpenEventsByServer(ctx context.Context) (map[uuid.UUID]OpenEventCount, error)
+	// CountUnhealthyEndpointsByServer counts enabled endpoints whose latest probe is unreachable or TLS-fail.
+	CountUnhealthyEndpointsByServer(ctx context.Context) (map[uuid.UUID]int, error)
 	// ResolveEventsByDedup closes open events with dedupKey and returns the rows that were closed.
 	ResolveEventsByDedup(ctx context.Context, dedupKey string, at time.Time, details []byte) ([]domain.Event, error)
 	// ResolveOpenEventsByTypeDomain closes open events of type for domainID (including those without dedup_key).
@@ -168,4 +174,14 @@ type EventFilter struct {
 	GroupIDs       []uuid.UUID
 	Limit          int
 	Offset         int
+}
+
+// OpenEventCount aggregates unresolved events for one server.
+type OpenEventCount struct {
+	Total       int
+	Critical    int
+	Warning     int
+	Info        int
+	Types       []string
+	MaxSeverity string // critical | warning | info | ""
 }

@@ -181,6 +181,11 @@
     return badge(s, {critical: 'bad', error: 'bad', warning: 'warn', warn: 'warn', info: 'info'}[s]);
   }
 
+  function stat(n, l, kind, href) {
+    const box = h('div', {class: 'stat' + (kind ? ' ' + kind : '')}, h('div', {class: 'n'}, n), h('div', {class: 'l'}, l));
+    return href ? h('a', {href}, box) : box;
+  }
+
   function table(headers, rows, empty) {
     if (!rows.length) return h('p', {class: 'muted'}, empty || 'Nothing to show.');
     return h('div', {class: 'tablewrap'}, h('table', null,
@@ -457,10 +462,6 @@
 
   pages.dashboard = async function (root) {
     const d = await api('GET', '/dashboard');
-    const stat = (n, l, kind, href) => {
-      const box = h('div', {class: 'stat' + (kind ? ' ' + kind : '')}, h('div', {class: 'n'}, n), h('div', {class: 'l'}, l));
-      return href ? h('a', {href}, box) : box;
-    };
     const servers = d.servers || {};
     const open = d.open_events || {};
     const grid = h('div', {class: 'grid'},
@@ -924,19 +925,39 @@
 
   // ---- servers
 
+  function serverProblems(s) {
+    const bits = [];
+    if (s.agent_status === 'offline' || s.agent_status === 'blocked_identity') {
+      bits.push(badge(s.agent_status, 'bad'));
+    }
+    (s.open_event_types || []).forEach((t) => bits.push(badge(t, s.max_event_severity === 'critical' ? 'bad' : 'warn')));
+    if (s.endpoints_unhealthy) bits.push(badge(s.endpoints_unhealthy + ' endpoint' + (s.endpoints_unhealthy > 1 ? 's' : '') + ' down', 'bad'));
+    if (s.local_config_conflict) bits.push(badge('local config conflict', 'warn'));
+    if (!bits.length) return muted('ok');
+    return h('div', null, bits.map((b, i) => [i ? ' ' : null, b]));
+  }
+
   pages.servers = async function (root) {
     const list = (await api('GET', '/servers')) || [];
+    list.sort((a, b) => {
+      const score = (s) => (s.open_critical || 0) * 100 + (s.open_warning || 0) * 10 + (s.endpoints_unhealthy || 0) + (s.agent_status === 'offline' || s.agent_status === 'blocked_identity' ? 50 : 0);
+      return score(b) - score(a) || serverLabel(a).localeCompare(serverLabel(b));
+    });
+    const problemCount = list.filter((s) => (s.open_events || 0) > 0 || s.endpoints_unhealthy || s.agent_status === 'offline' || s.agent_status === 'blocked_identity').length;
     const rows = list.map((s) => [
       link('/servers/' + s.id, serverLabel(s)),
-      s.key_prefix ? code(s.key_prefix) : muted('—'),
       statusBadge(s.agent_status),
+      serverProblems(s),
       s.last_ip || '',
       fmt(s.last_seen_at),
-      s.uses_custom_config ? badge('custom', 'info') : muted('defaults'),
       (s.domain_ids || []).length,
+      s.uses_custom_config ? badge('custom', 'info') : muted('defaults'),
     ]);
-    root.replaceChildren(section('Servers', table(['Server', 'Key', 'Status', 'Last IP', 'Last seen', 'Config', 'Domains'], rows,
-      'No servers yet. Agents appear on the Enrollments page after their first contact.')));
+    root.replaceChildren(
+      section('Servers',
+        h('p', {class: 'muted'}, problemCount ? problemCount + ' server(s) with problems (sorted first).' : 'No open agent/monitor problems.'),
+        table(['Server', 'Agent', 'Problems', 'Last IP', 'Last seen', 'Domains', 'Config'], rows,
+          'No servers yet. Agents appear on the Enrollments page after their first contact.')));
   };
 
   // ---- server detail
@@ -958,6 +979,8 @@
       const info = h('dl', {class: 'kv'},
         h('dt', null, 'ID'), h('dd', null, code(s.id)),
         h('dt', null, 'Status'), h('dd', null, statusBadge(s.agent_status)),
+        h('dt', null, 'Problems'), h('dd', null, serverProblems(s),
+          s.open_events ? h('div', {class: 'small'}, link('/events?unresolved=1', s.open_events + ' open event(s) →')) : null),
         h('dt', null, 'Key prefix'), h('dd', null, s.key_prefix ? code(s.key_prefix) : '—'),
         h('dt', null, 'Last IP'), h('dd', null, s.last_ip || '—'),
         h('dt', null, 'Last seen'), h('dd', null, fmt(s.last_seen_at)),
@@ -1273,12 +1296,13 @@
   // ---- monitor
 
   pages.monitor = async function (root) {
+    const summary = h('div', null);
     const list = h('div', null);
     const results = h('div', null);
     const resultsSection = section('Results', results);
     resultsSection.hidden = true;
     const formSlot = h('div', null);
-    root.replaceChildren(section('Endpoints', list), resultsSection, section('New endpoint', formSlot));
+    root.replaceChildren(summary, section('Endpoints', list), resultsSection, section('New endpoint', formSlot));
 
     const [srv, domains] = await Promise.all([serversById(), api('GET', '/domains')]);
     const dmap = new Map((domains || []).map((d) => [d.id, d]));
@@ -1297,6 +1321,12 @@
       if (await act(form.querySelector('button'), () => api('POST', '/monitor/endpoints', body), 'Endpoint added')) refresh();
     });
     formSlot.append(form);
+
+    function issueBadge(issue) {
+      if (!issue || issue === 'disabled') return issue === 'disabled' ? badge('disabled') : muted('ok');
+      const kind = {unreachable: 'bad', tls_fail: 'bad', cert_expired: 'bad', cert_expiring: 'warn', not_checked: 'warn'}[issue] || 'warn';
+      return badge(issue.replace(/_/g, ' '), kind);
+    }
 
     async function showResults(ep) {
       resultsSection.hidden = false;
@@ -1317,8 +1347,24 @@
     }
 
     async function refresh() {
+      const eps = (await api('GET', '/monitor/endpoints')) || [];
+      const counts = {total: eps.length, unhealthy: 0, unreachable: 0, tls_fail: 0, cert_expired: 0, cert_expiring: 0, not_checked: 0};
+      eps.forEach((ep) => {
+        if (!ep.healthy && ep.issue !== 'disabled') {
+          counts.unhealthy++;
+          if (counts[ep.issue] !== undefined) counts[ep.issue]++;
+        }
+      });
+      summary.replaceChildren(section('Summary',
+        h('div', {class: 'grid'},
+          stat(counts.total, 'Endpoints', '', null),
+          stat(counts.unhealthy, 'Unhealthy', counts.unhealthy ? 'bad' : '', null),
+          stat(counts.unreachable, 'Unreachable', counts.unreachable ? 'bad' : '', null),
+          stat(counts.tls_fail, 'TLS fail', counts.tls_fail ? 'bad' : '', null),
+          stat(counts.cert_expired + counts.cert_expiring, 'Cert expiry', (counts.cert_expired || counts.cert_expiring) ? 'warn' : '', null),
+          stat(counts.not_checked, 'Not checked', counts.not_checked ? 'warn' : '', null))));
+
       await loadInto(list, async () => {
-        const eps = (await api('GET', '/monitor/endpoints')) || [];
         const rows = eps.map((ep) => {
           const s = srv.map.get(ep.server_id);
           const d = ep.domain_id ? dmap.get(ep.domain_id) : null;
@@ -1327,10 +1373,13 @@
             ep.host + ':' + ep.port,
             s ? link('/servers/' + s.id, serverLabel(s)) : '',
             d ? link('/domains/' + d.id, d.fqdn) : muted('—'),
-            ep.enabled ? badge('enabled', 'ok') : badge('disabled'),
-            l ? h('div', null, l.reachable && l.tls_ok ? badge('ok', 'ok') : badge(l.reachable ? 'tls fail' : 'unreachable', 'bad'), ' ',
-              l.peer_not_after ? expiryBadge(l.peer_not_after) : '', h('div', {class: 'small muted'}, fmt(l.checked_at), l.error ? ' · ' + l.error : ''))
-              : muted('not checked'),
+            issueBadge(ep.issue),
+            l ? h('div', null,
+              l.peer_not_after ? expiryBadge(l.peer_not_after) : '',
+              l.peer_fingerprint ? h('div', {class: 'small'}, code(shortFp(l.peer_fingerprint))) : null,
+              h('div', {class: 'small muted'}, fmt(l.checked_at), l.error ? ' · ' + l.error : '',
+                l.latency_ms != null ? ' · ' + l.latency_ms + ' ms' : ''))
+              : muted('—'),
             btns(
               button('Check now', async (b) => {
                 if (await act(b, () => api('POST', '/monitor/endpoints/' + ep.id + '/check'), 'Check finished')) refresh();
@@ -1345,7 +1394,7 @@
               }, 'danger')),
           ];
         });
-        return table(['Endpoint', 'Server', 'Domain', 'State', 'Latest', ''], rows, 'No endpoints. Add one below.');
+        return table(['Endpoint', 'Server', 'Domain', 'Issue', 'Latest', ''], rows, 'No endpoints. Add one below.');
       });
     }
     await refresh();

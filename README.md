@@ -65,8 +65,11 @@ Key behaviors:
 - **Monitor.** A background worker probes configured endpoints (host:port) and raises
   events for unreachable endpoints, expired/expiring certificates and endpoints that
   serve a different certificate than the current one.
-- **Events.** Open events do not expire; they close when a later success resolves
-  their dedup key, or when an operator uses **Dismiss** on the Events page.
+- **Events.** Open (alarm) events do not expire; they close when a later success
+  resolves their dedup key, or when an operator uses **Dismiss**. Point-in-time
+  events (`agent_accepted`, `agent_rejected`, `agent_config_updated`, cert upload
+  confirmations/rejections, rollbacks) are stored already resolved and never sit
+  in the open queue.
 - **Notifications.** Separate non-login *notification accounts* (not UI users)
   receive alerts over email (SMTP), Telegram, or webhooks. Each account has an
   event-type allowlist (new accounts default to certificate expiration/validation

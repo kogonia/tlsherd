@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,7 +47,9 @@ type EndpointPatch struct {
 // EndpointView is an endpoint with its latest probe result.
 type EndpointView struct {
 	domain.ServerEndpoint
-	Latest *domain.MonitorResult `json:"latest,omitempty"`
+	Latest  *domain.MonitorResult `json:"latest,omitempty"`
+	Healthy bool                  `json:"healthy"`
+	Issue   string                `json:"issue,omitempty"` // unreachable | tls_fail | cert_expired | cert_expiring | not_checked | disabled
 }
 
 type monitorSettings struct {
@@ -244,6 +247,8 @@ func (s *Services) ListEndpoints(ctx context.Context, actor *domain.User) ([]End
 			visible[id] = struct{}{}
 		}
 	}
+	expiringSoon := s.monitorSettings(ctx).ExpiringSoon
+	now := s.now()
 	out := make([]EndpointView, 0, len(eps))
 	for _, ep := range eps {
 		if visible != nil {
@@ -262,9 +267,41 @@ func (s *Services) ListEndpoints(ctx context.Context, actor *domain.User) ([]End
 		case !errors.Is(err, domain.ErrNotFound):
 			return nil, fmt.Errorf("list endpoints: %w", err)
 		}
+		v.Healthy, v.Issue = endpointHealth(ep, res, now, expiringSoon)
 		out = append(out, v)
 	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Healthy != out[j].Healthy {
+			return !out[i].Healthy && out[j].Healthy
+		}
+		return out[i].Host < out[j].Host
+	})
 	return out, nil
+}
+
+func endpointHealth(ep domain.ServerEndpoint, res *domain.MonitorResult, now time.Time, expiringSoon time.Duration) (healthy bool, issue string) {
+	if !ep.Enabled {
+		return true, "disabled"
+	}
+	if res == nil {
+		return false, "not_checked"
+	}
+	if !res.Reachable {
+		return false, "unreachable"
+	}
+	if !res.TLSOK {
+		return false, "tls_fail"
+	}
+	if res.PeerNotAfter != nil {
+		left := res.PeerNotAfter.Sub(now)
+		if left <= 0 {
+			return false, "cert_expired"
+		}
+		if left <= expiringSoon {
+			return false, "cert_expiring"
+		}
+	}
+	return true, ""
 }
 
 // ListMonitorResults returns probe history of an endpoint, newest first.

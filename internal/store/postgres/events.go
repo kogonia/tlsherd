@@ -59,6 +59,112 @@ func (s *Store) UpsertOpenEvent(ctx context.Context, e *domain.Event) (bool, err
 	return inserted, mapErr("upsert open event", err)
 }
 
+// InsertInstantEvent records a point-in-time event that is already resolved.
+func (s *Store) InsertInstantEvent(ctx context.Context, e *domain.Event) error {
+	if e.Severity == "" {
+		e.Severity = "info"
+	}
+	at := e.At
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	err := s.q.QueryRow(ctx, `
+		INSERT INTO events (at, type, severity, domain_id, server_id, certificate_id, group_id,
+			message, details, dedup_key, resolved_at, actor_user_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $1, $11)
+		RETURNING id, at, resolved_at`,
+		at, e.Type, e.Severity, e.DomainID, e.ServerID, e.CertificateID, e.GroupID,
+		e.Message, jsonOrDefault(e.Details, "{}"), e.DedupKey, e.ActorUserID,
+	).Scan(&e.ID, &e.At, &e.ResolvedAt)
+	return mapErr("insert instant event", err)
+}
+
+// CountOpenEventsByServer aggregates unresolved events keyed by server_id.
+func (s *Store) CountOpenEventsByServer(ctx context.Context) (map[uuid.UUID]store.OpenEventCount, error) {
+	rows, err := s.q.Query(ctx, `
+		SELECT server_id, type, severity, count(*)::int
+		FROM events
+		WHERE resolved_at IS NULL AND server_id IS NOT NULL
+		GROUP BY server_id, type, severity`)
+	if err != nil {
+		return nil, mapErr("count open events by server", err)
+	}
+	defer rows.Close()
+	out := map[uuid.UUID]store.OpenEventCount{}
+	typeSeen := map[uuid.UUID]map[string]struct{}{}
+	for rows.Next() {
+		var sid uuid.UUID
+		var typ, sev string
+		var n int
+		if err := rows.Scan(&sid, &typ, &sev, &n); err != nil {
+			return nil, mapErr("count open events by server", err)
+		}
+		c := out[sid]
+		c.Total += n
+		switch sev {
+		case "critical":
+			c.Critical += n
+		case "warning":
+			c.Warning += n
+		default:
+			c.Info += n
+		}
+		if typeSeen[sid] == nil {
+			typeSeen[sid] = map[string]struct{}{}
+		}
+		if _, ok := typeSeen[sid][typ]; !ok {
+			typeSeen[sid][typ] = struct{}{}
+			c.Types = append(c.Types, typ)
+		}
+		out[sid] = c
+	}
+	if err := rows.Err(); err != nil {
+		return nil, mapErr("count open events by server", err)
+	}
+	for sid, c := range out {
+		switch {
+		case c.Critical > 0:
+			c.MaxSeverity = "critical"
+		case c.Warning > 0:
+			c.MaxSeverity = "warning"
+		case c.Total > 0:
+			c.MaxSeverity = "info"
+		}
+		out[sid] = c
+	}
+	return out, nil
+}
+
+// CountUnhealthyEndpointsByServer counts enabled endpoints with a failing latest probe.
+func (s *Store) CountUnhealthyEndpointsByServer(ctx context.Context) (map[uuid.UUID]int, error) {
+	rows, err := s.q.Query(ctx, `
+		SELECT e.server_id, count(*)::int
+		FROM server_endpoints e
+		JOIN LATERAL (
+			SELECT reachable, tls_ok
+			FROM monitor_results r
+			WHERE r.endpoint_id = e.id
+			ORDER BY r.checked_at DESC
+			LIMIT 1
+		) latest ON true
+		WHERE e.enabled AND (NOT latest.reachable OR NOT latest.tls_ok)
+		GROUP BY e.server_id`)
+	if err != nil {
+		return nil, mapErr("count unhealthy endpoints by server", err)
+	}
+	defer rows.Close()
+	out := map[uuid.UUID]int{}
+	for rows.Next() {
+		var sid uuid.UUID
+		var n int
+		if err := rows.Scan(&sid, &n); err != nil {
+			return nil, mapErr("count unhealthy endpoints by server", err)
+		}
+		out[sid] = n
+	}
+	return out, mapErr("count unhealthy endpoints by server", rows.Err())
+}
+
 // ResolveEventsByDedup resolves every open event with dedupKey at the given time
 // and returns the rows that were closed. A non-empty details object is merged
 // into the stored details. No match is not an error.
