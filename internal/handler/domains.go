@@ -296,6 +296,7 @@ type domainServerRequest struct {
 	CertPath        string          `json:"cert_path"`
 	KeyPath         string          `json:"key_path"`
 	ChainPath       string          `json:"chain_path"`
+	FullchainPath   string          `json:"fullchain_path"`
 	RestartOverride json.RawMessage `json:"restart_override"`
 }
 

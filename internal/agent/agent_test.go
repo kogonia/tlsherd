@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kogonia/tlsherd/internal/agentcfg"
+	"github.com/kogonia/tlsherd/internal/config"
 )
 
 func TestHappyPath(t *testing.T) {
@@ -32,6 +34,11 @@ func TestHappyPath(t *testing.T) {
 		if err != nil || string(got) != want {
 			t.Fatalf("%s mismatch: %v", name, err)
 		}
+	}
+	wantFull := b1.Cert + b1.Chain
+	gotFull, err := os.ReadFile(filepath.Join(verDir, "fullchain.pem"))
+	if err != nil || string(gotFull) != wantFull {
+		t.Fatalf("fullchain.pem mismatch: %v", err)
 	}
 	if fi, _ := os.Stat(filepath.Join(verDir, "key.pem")); fi.Mode().Perm() != 0o600 {
 		t.Fatalf("key mode = %v", fi.Mode().Perm())
@@ -253,6 +260,65 @@ func TestBackupFailureAbortsApply(t *testing.T) {
 	}
 	if e.loadState().Domains[testFQDN].Fingerprint != fp1 {
 		t.Fatal("state advanced after backup failure")
+	}
+}
+
+func TestFullchainPathAndCertRootOverride(t *testing.T) {
+	e := newEnv(t)
+	altRoot := filepath.Join(t.TempDir(), "nginx-certs")
+	localPath := filepath.Join(e.stateDir, "agent.local.cfg")
+	lc := agentcfg.DefaultLocal()
+	lc.Service = agentcfg.ServiceNginx
+	lc.Verify.Command = []string{"nginx", "-t"}
+	lc.Restart = agentcfg.Restart{Type: "systemd", Name: "nginx", ReloadOnly: true}
+	lc.CertRoot = altRoot
+	lc.FullchainPath = "{domain}.crt"
+	lc.KeyPath = "{domain}.key"
+	raw, err := agentcfg.CanonicalLocalJSON(lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(e.stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(localPath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e.seedKey()
+	fp1, b1 := e.srv.addCert(t, testFQDN, inWindowTime.Add(90*24*time.Hour))
+	e.srv.assign(Assignment{FQDN: testFQDN, Fingerprint: fp1})
+
+	opts := Options{
+		Bootstrap: config.AgentBootstrap{
+			ServerURL: e.srv.URL, CertRoot: e.certRoot, StateDir: e.stateDir,
+			LocalConfigPath: localPath, Once: true,
+		},
+		Clock:  e.clock,
+		Runner: e.runner,
+		Sleep:  func(context.Context, time.Duration) error { return nil },
+	}
+	a, err := New(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if entries, err := os.ReadDir(e.certRoot); err == nil && len(entries) > 0 {
+		t.Fatalf("bootstrap cert_root used despite override: %v", entries)
+	}
+	wantFull := b1.Cert + b1.Chain
+	gotFull, err := os.ReadFile(filepath.Join(altRoot, testFQDN+".crt"))
+	if err != nil || string(gotFull) != wantFull {
+		t.Fatalf("published fullchain: %v got %q", err, gotFull)
+	}
+	gotKey, err := os.ReadFile(filepath.Join(altRoot, testFQDN+".key"))
+	if err != nil || string(gotKey) != b1.Key {
+		t.Fatalf("published key: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(altRoot, testFQDN, "versions", fp1, "fullchain.pem")); err != nil {
+		t.Fatalf("version fullchain missing: %v", err)
 	}
 }
 

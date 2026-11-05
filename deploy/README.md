@@ -14,5 +14,7 @@
 Operator documentation (fields, merge order, layouts): see the root [README.md](../README.md) sections **Configuration reference** and **Deploy**.
 
 Notification channels (SMTP / Telegram / webhook) and recipients are configured in the
-admin UI (**Notifications**, **Notification accounts**), not in env files. Existing
-databases: apply [`migrations/upgrade_notifications.sql`](../migrations/upgrade_notifications.sql).
+admin UI (**Notifications**, **Notification accounts**), not in env files.
+
+Sample [`agent.local.cfg`](agent.local.cfg) uses `cert_root=/cert`, publishes nginx-ready
+fullchain to `{domain}.crt` and key to `{domain}.key` (no manual concat).

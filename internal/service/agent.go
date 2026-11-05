@@ -35,6 +35,7 @@ type PollDomain struct {
 	CertPath        string          `json:"cert_path"`
 	KeyPath         string          `json:"key_path"`
 	ChainPath       string          `json:"chain_path"`
+	FullchainPath   string          `json:"fullchain_path"`
 	RestartOverride json.RawMessage `json:"restart_override,omitempty"`
 }
 
@@ -109,7 +110,8 @@ func (s *Services) AgentPoll(ctx context.Context, srv *domain.Server, in AgentPo
 		pd := PollDomain{
 			DomainID: a.domain.ID, FQDN: a.domain.FQDN, Version: a.dc.Version,
 			Fingerprint: a.cert.FingerprintSHA256, NotBefore: a.cert.NotBefore, NotAfter: a.cert.NotAfter,
-			InstallMode: a.ds.InstallMode, CertPath: a.ds.CertPath, KeyPath: a.ds.KeyPath, ChainPath: a.ds.ChainPath,
+			InstallMode: a.ds.InstallMode, CertPath: a.ds.CertPath, KeyPath: a.ds.KeyPath,
+			ChainPath: a.ds.ChainPath, FullchainPath: a.ds.FullchainPath,
 		}
 		if len(a.ds.RestartOverride) > 0 {
 			pd.RestartOverride = json.RawMessage(a.ds.RestartOverride)

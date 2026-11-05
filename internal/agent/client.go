@@ -81,11 +81,12 @@ type Assignment struct {
 	FQDN        string            `json:"fqdn"`
 	Fingerprint string            `json:"fingerprint_sha256"`
 	NotAfter    time.Time         `json:"not_after"`
-	InstallMode string            `json:"install_mode,omitempty"`
-	CertPath    string            `json:"cert_path,omitempty"`
-	KeyPath     string            `json:"key_path,omitempty"`
-	ChainPath   string            `json:"chain_path,omitempty"`
-	Restart     *agentcfg.Restart `json:"restart_override,omitempty"`
+	InstallMode   string            `json:"install_mode,omitempty"`
+	CertPath      string            `json:"cert_path,omitempty"`
+	KeyPath       string            `json:"key_path,omitempty"`
+	ChainPath     string            `json:"chain_path,omitempty"`
+	FullchainPath string            `json:"fullchain_path,omitempty"`
+	Restart       *agentcfg.Restart `json:"restart_override,omitempty"`
 }
 
 // CertBundle is the GET /api/v1/agent/certs/{fingerprint} payload.

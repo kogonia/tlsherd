@@ -339,8 +339,9 @@ If the active file is missing/corrupt, the agent loads `.prev` (WARN) or empty
 | `verify` | Pre-start check run after files are switched, **before** restart |
 | `restart` | How to reload/restart the local web (or other) service |
 | `install` | How files appear under the cert root |
-| `cert_root` | Optional override of `TLSHERD_CERT_ROOT` |
-| `cert_path` / `key_path` / `chain_path` | Optional extra publish paths (may use `{domain}`) |
+| `cert_root` | Working cert directory (overrides `TLSHERD_CERT_ROOT`, default `/etc/tls`) |
+| `cert_path` / `key_path` / `chain_path` | Optional extra publish paths for leaf / key / intermediates (`{domain}` ok) |
+| `fullchain_path` | Optional extra publish of **leaf+chain** (use this for nginx `ssl_certificate`) |
 
 #### Service catalog defaults
 
@@ -390,7 +391,7 @@ On-disk layout under cert root (default `/etc/tls`):
 
 ```text
 <cert_root>/<fqdn>/
-  versions/<fingerprint>/{cert,key,chain}.pem   # content store
+  versions/<fingerprint>/{cert,key,chain,fullchain}.pem
   current/   → versions/<fingerprint>/          # or a real directory in copy mode
   backups/<timestamp>/                          # pre-apply snapshot
 ```
@@ -398,18 +399,26 @@ On-disk layout under cert root (default `/etc/tls`):
 | Field | Meaning |
 | --- | --- |
 | `mode` | `symlink` (default) or `copy` — see below |
-| `cert_name` / `key_name` / `chain_name` | Filenames inside `versions/` and `current/` |
+| `cert_name` / `key_name` / `chain_name` / `fullchain_name` | Filenames inside `versions/` and `current/` |
 | `subdir` | Optional subdirectory under the domain tree |
 | `owner` | Optional `user[:group]` after write |
 | `dir_mode` / `key_mode` / `cert_mode` | Octal permission strings (`0750`, `0600`, `0644`) |
 
+`fullchain.pem` is always written (leaf, or leaf+intermediates). Nginx should use fullchain
+(or `fullchain_path`), not leaf alone.
+
 **`mode: symlink`** — write PEMs once under `versions/<fp>/`, point `current` (and optional
-`cert_path`/`key_path`/`chain_path`) at them with symlinks. Prefer this when nginx/haproxy/apache
-can follow links (configure the vhost to use e.g. `/etc/tls/{domain}/current/cert.pem`).
+extra paths) at them with symlinks.
 
 **`mode: copy`** — same version store, but `current/` is a real directory of copied files
-(extra paths are copied too). Use when the consumer cannot follow symlinks (some chroots,
-bind-mounts, or apps that require regular files).
+(extra paths are copied too). Use when the consumer cannot follow symlinks.
+
+**Nginx example** (`cert_root=/cert`, `fullchain_path={domain}.crt`, `key_path={domain}.key`):
+
+```nginx
+ssl_certificate     /cert/a-mobile.biz.crt;   # fullchain published by agent
+ssl_certificate_key /cert/a-mobile.biz.key;
+```
 
 Domain assignment paths / `restart_override` from the UI still apply as a **last overlay**
 for that domain only.

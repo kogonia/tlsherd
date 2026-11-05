@@ -255,6 +255,8 @@ func resetLocalField(lc agentcfg.LocalConfig, field string) (agentcfg.LocalConfi
 		lc.KeyPath = ""
 	case "chain_path":
 		lc.ChainPath = ""
+	case "fullchain_path":
+		lc.FullchainPath = ""
 	case "cert_root":
 		lc.CertRoot = ""
 	case "service":

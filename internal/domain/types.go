@@ -189,6 +189,7 @@ type DomainServer struct {
 	CertPath        string    `json:"cert_path"`
 	KeyPath         string    `json:"key_path"`
 	ChainPath       string    `json:"chain_path"`
+	FullchainPath   string    `json:"fullchain_path"`
 	RestartOverride []byte    `json:"-"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`

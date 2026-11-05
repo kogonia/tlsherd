@@ -172,6 +172,7 @@ CREATE TABLE domain_servers (
     cert_path           text NOT NULL DEFAULT '',
     key_path            text NOT NULL DEFAULT '',
     chain_path          text NOT NULL DEFAULT '',
+    fullchain_path      text NOT NULL DEFAULT '',
     restart_override    jsonb,
     created_at          timestamptz NOT NULL DEFAULT now(),
     updated_at          timestamptz NOT NULL DEFAULT now(),

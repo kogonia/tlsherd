@@ -23,7 +23,7 @@ import (
 // layout is the on-disk tree of one domain:
 //
 //	<cert_root>/<fqdn>/current -> versions/<fingerprint>
-//	<cert_root>/<fqdn>/versions/<fingerprint>/{cert,key,chain}.pem
+//	<cert_root>/<fqdn>/versions/<fingerprint>/{cert,key,chain,fullchain}.pem
 //	<cert_root>/<fqdn>/backups/<ts>/...
 type layout struct {
 	base, versions, backups, current string
@@ -68,10 +68,14 @@ type installSpec struct {
 	extra       map[string]string // file name in version dir -> extra absolute target path
 	cert, key   []byte
 	chain       []byte
+	fullchain   []byte // leaf + intermediates (always set; equals leaf when chain empty)
 }
 
-func (s installSpec) names() (cert, key, chain string) {
-	return orDefault(s.inst.CertName, "cert.pem"), orDefault(s.inst.KeyName, "key.pem"), orDefault(s.inst.ChainName, "chain.pem")
+func (s installSpec) names() (cert, key, chain, fullchain string) {
+	return orDefault(s.inst.CertName, "cert.pem"),
+		orDefault(s.inst.KeyName, "key.pem"),
+		orDefault(s.inst.ChainName, "chain.pem"),
+		orDefault(s.inst.FullchainName, "fullchain.pem")
 }
 
 func orDefault(v, def string) string {
@@ -95,8 +99,8 @@ func parseMode(s string, def os.FileMode) os.FileMode {
 // targets lists every path the install may modify (snapshotted by backup).
 func (s installSpec) targets(l layout) []string {
 	out := []string{l.current}
-	cn, kn, hn := s.names()
-	for _, name := range []string{cn, kn, hn} {
+	cn, kn, hn, fn := s.names()
+	for _, name := range []string{cn, kn, hn, fn} {
 		if p, ok := s.extra[name]; ok {
 			out = append(out, p)
 		}
@@ -109,21 +113,23 @@ func (s installSpec) fileSet() []struct {
 	data []byte
 	mode os.FileMode
 } {
-	cn, kn, hn := s.names()
+	cn, kn, hn, fn := s.names()
+	certMode := parseMode(s.inst.CertMode, 0o644)
 	set := []struct {
 		name string
 		data []byte
 		mode os.FileMode
 	}{
-		{cn, s.cert, parseMode(s.inst.CertMode, 0o644)},
+		{cn, s.cert, certMode},
 		{kn, s.key, parseMode(s.inst.KeyMode, 0o600)},
+		{fn, s.fullchain, certMode},
 	}
 	if len(s.chain) > 0 {
 		set = append(set, struct {
 			name string
 			data []byte
 			mode os.FileMode
-		}{hn, s.chain, parseMode(s.inst.CertMode, 0o644)})
+		}{hn, s.chain, certMode})
 	}
 	return set
 }
@@ -148,7 +154,7 @@ func writeVersion(l layout, s installSpec) (string, error) {
 	}
 	// A stale chain from an earlier staging of the same fingerprint must not linger.
 	if len(s.chain) == 0 {
-		_, _, hn := s.names()
+		_, _, hn, _ := s.names()
 		_ = os.Remove(filepath.Join(dir, hn))
 	}
 	if err := chownTree(s.inst.Owner, dir); err != nil {
@@ -161,7 +167,7 @@ func writeVersion(l layout, s installSpec) (string, error) {
 func switchActive(l layout, s installSpec) error {
 	dirMode := parseMode(s.inst.DirMode, 0o750)
 	verDir := l.versionDir(s.fingerprint)
-	cn, kn, hn := s.names()
+	cn, kn, hn, fn := s.names()
 	if s.mode == "copy" {
 		if fi, err := os.Lstat(l.current); err == nil && fi.Mode()&os.ModeSymlink != 0 {
 			if err := os.Remove(l.current); err != nil {
@@ -203,7 +209,7 @@ func switchActive(l layout, s installSpec) error {
 	if err := replaceSymlink(l.current, filepath.Join("versions", s.fingerprint)); err != nil {
 		return fmt.Errorf("switch current: %w", err)
 	}
-	for _, name := range []string{cn, kn, hn} {
+	for _, name := range []string{cn, kn, hn, fn} {
 		p, ok := s.extra[name]
 		if !ok || (name == hn && len(s.chain) == 0) {
 			continue

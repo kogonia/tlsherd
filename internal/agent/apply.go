@@ -88,7 +88,7 @@ func (a *Agent) processDomain(ctx context.Context, asg Assignment) error {
 // fetchValidated returns a parsed, validated bundle for the assignment. A local
 // versions/<fp> copy is revalidated via If-None-Match/304.
 func (a *Agent) fetchValidated(ctx context.Context, l layout, asg Assignment) (*certutil.Parsed, error) {
-	cn, kn, hn := installSpec{inst: a.runtimeCFG().Install}.names()
+	cn, kn, hn, _ := installSpec{inst: a.runtimeCFG().Install}.names()
 	verDir := l.versionDir(asg.Fingerprint)
 	_, statErr := os.Stat(filepath.Join(verDir, kn))
 	haveLocal := statErr == nil
@@ -159,6 +159,8 @@ func (a *Agent) stage(ctx context.Context, l layout, asg Assignment, ds DomainSt
 
 func (a *Agent) spec(asg Assignment, p *certutil.Parsed) installSpec {
 	rt := a.runtimeCFG()
+	fullchain := append([]byte{}, p.CertPEM...)
+	fullchain = append(fullchain, p.ChainPEM...)
 	s := installSpec{
 		fqdn:        asg.FQDN,
 		fingerprint: asg.Fingerprint,
@@ -167,6 +169,7 @@ func (a *Agent) spec(asg Assignment, p *certutil.Parsed) installSpec {
 		cert:        p.CertPEM,
 		key:         p.KeyPEM,
 		chain:       p.ChainPEM,
+		fullchain:   fullchain,
 		extra:       map[string]string{},
 	}
 	if asg.InstallMode != "" {
@@ -175,8 +178,8 @@ func (a *Agent) spec(asg Assignment, p *certutil.Parsed) installSpec {
 	if s.mode == "" {
 		s.mode = "symlink"
 	}
-	cn, kn, hn := s.names()
-	certPath, keyPath, chainPath := asg.CertPath, asg.KeyPath, asg.ChainPath
+	cn, kn, hn, fn := s.names()
+	certPath, keyPath, chainPath, fullPath := asg.CertPath, asg.KeyPath, asg.ChainPath, asg.FullchainPath
 	if certPath == "" {
 		certPath = a.local.CertPath
 	}
@@ -186,16 +189,19 @@ func (a *Agent) spec(asg Assignment, p *certutil.Parsed) installSpec {
 	if chainPath == "" {
 		chainPath = a.local.ChainPath
 	}
-	for name, rel := range map[string]string{cn: certPath, kn: keyPath, hn: chainPath} {
+	if fullPath == "" {
+		fullPath = a.local.FullchainPath
+	}
+	for name, rel := range map[string]string{cn: certPath, kn: keyPath, hn: chainPath, fn: fullPath} {
 		if rel == "" {
 			continue
 		}
-		p, err := agentcfg.JoinUnderRoot(a.certRoot(), agentcfg.RenderPath(rel, asg.FQDN))
+		abs, err := agentcfg.JoinUnderRoot(a.certRoot(), agentcfg.RenderPath(rel, asg.FQDN))
 		if err != nil {
 			a.log.Warn("ignoring unsafe extra path", "domain", asg.FQDN, "path", rel, "error", err)
 			continue
 		}
-		s.extra[name] = p
+		s.extra[name] = abs
 	}
 	return s
 }

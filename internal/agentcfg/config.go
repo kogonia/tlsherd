@@ -33,15 +33,16 @@ type MaintenanceWindow struct {
 }
 
 type Install struct {
-	Mode      string `json:"mode"` // symlink|copy
-	Subdir    string `json:"subdir"`
-	CertName  string `json:"cert_name"`
-	KeyName   string `json:"key_name"`
-	ChainName string `json:"chain_name"`
-	Owner     string `json:"owner"`
-	DirMode   string `json:"dir_mode"`
-	KeyMode   string `json:"key_mode"`
-	CertMode  string `json:"cert_mode"`
+	Mode          string `json:"mode"` // symlink|copy
+	Subdir        string `json:"subdir"`
+	CertName      string `json:"cert_name"`
+	KeyName       string `json:"key_name"`
+	ChainName     string `json:"chain_name"`
+	FullchainName string `json:"fullchain_name"` // leaf+intermediates; for nginx ssl_certificate
+	Owner         string `json:"owner"`
+	DirMode       string `json:"dir_mode"`
+	KeyMode       string `json:"key_mode"`
+	CertMode      string `json:"cert_mode"`
 }
 
 type Verify struct {
@@ -106,13 +107,14 @@ func Default() Config {
 		UrgentThreshold:    Duration(72 * time.Hour),
 		StageOutsideWindow: true,
 		Install: Install{
-			Mode:      "symlink",
-			CertName:  "cert.pem",
-			KeyName:   "key.pem",
-			ChainName: "chain.pem",
-			DirMode:   "0750",
-			KeyMode:   "0600",
-			CertMode:  "0644",
+			Mode:          "symlink",
+			CertName:      "cert.pem",
+			KeyName:       "key.pem",
+			ChainName:     "chain.pem",
+			FullchainName: "fullchain.pem",
+			DirMode:       "0750",
+			KeyMode:       "0600",
+			CertMode:      "0644",
 		},
 		Verify: Verify{
 			Timeout: Duration(30 * time.Second),

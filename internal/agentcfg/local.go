@@ -24,10 +24,11 @@ type LocalConfig struct {
 	Verify   Verify  `json:"verify"`
 	Restart  Restart `json:"restart"`
 	Install  Install `json:"install"`
-	CertRoot string  `json:"cert_root,omitempty"`
-	CertPath string  `json:"cert_path,omitempty"`
-	KeyPath  string  `json:"key_path,omitempty"`
-	ChainPath string `json:"chain_path,omitempty"`
+	CertRoot      string `json:"cert_root,omitempty"`       // working cert tree root (overrides TLSHERD_CERT_ROOT)
+	CertPath      string `json:"cert_path,omitempty"`       // extra leaf publish path ({domain} ok)
+	KeyPath       string `json:"key_path,omitempty"`
+	ChainPath     string `json:"chain_path,omitempty"`
+	FullchainPath string `json:"fullchain_path,omitempty"` // extra leaf+chain publish (nginx ssl_certificate)
 }
 
 // ServiceInfo describes a built-in catalog entry.
@@ -235,6 +236,9 @@ func MergeLocal(base, patch LocalConfig) LocalConfig {
 	if patch.ChainPath != "" {
 		out.ChainPath = patch.ChainPath
 	}
+	if patch.FullchainPath != "" {
+		out.FullchainPath = patch.FullchainPath
+	}
 	return out
 }
 
@@ -250,7 +254,7 @@ func (lc LocalConfig) IsConfigured() bool {
 	if lc.Restart.Name != "" || len(lc.Restart.Command) > 0 || lc.Restart.Type == "docker" || lc.Restart.Type == "exec" {
 		return true
 	}
-	if lc.CertRoot != "" || lc.CertPath != "" || lc.KeyPath != "" || lc.ChainPath != "" {
+	if lc.CertRoot != "" || lc.CertPath != "" || lc.KeyPath != "" || lc.ChainPath != "" || lc.FullchainPath != "" {
 		return true
 	}
 	return false

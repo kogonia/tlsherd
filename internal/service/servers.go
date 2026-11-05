@@ -54,6 +54,7 @@ type DomainServerInput struct {
 	CertPath        string
 	KeyPath         string
 	ChainPath       string
+	FullchainPath   string
 	RestartOverride json.RawMessage
 }
 
@@ -530,7 +531,10 @@ func (s *Services) UpsertDomainServer(ctx context.Context, actor *domain.User, d
 	default:
 		return nil, invalidf("install_mode must be symlink or copy")
 	}
-	for label, p := range map[string]string{"cert_path": in.CertPath, "key_path": in.KeyPath, "chain_path": in.ChainPath} {
+	for label, p := range map[string]string{
+		"cert_path": in.CertPath, "key_path": in.KeyPath,
+		"chain_path": in.ChainPath, "fullchain_path": in.FullchainPath,
+	} {
 		if err := validateAssignmentPath(label, p); err != nil {
 			return nil, err
 		}
@@ -550,7 +554,8 @@ func (s *Services) UpsertDomainServer(ctx context.Context, actor *domain.User, d
 	}
 	ds := &domain.DomainServer{
 		DomainID: domainID, ServerID: serverID, InstallMode: in.InstallMode,
-		CertPath: in.CertPath, KeyPath: in.KeyPath, ChainPath: in.ChainPath, RestartOverride: in.RestartOverride,
+		CertPath: in.CertPath, KeyPath: in.KeyPath, ChainPath: in.ChainPath,
+		FullchainPath: in.FullchainPath, RestartOverride: in.RestartOverride,
 	}
 	err := s.Store.Tx(ctx, func(tx store.Store) error {
 		if _, err := tx.GetDomain(ctx, domainID); err != nil {

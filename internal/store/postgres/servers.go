@@ -288,12 +288,12 @@ func (s *Store) DeleteServerConfig(ctx context.Context, serverID uuid.UUID) erro
 // Domain <-> server assignment
 
 const domainServerCols = `domain_id, server_id, install_mode, cert_path, key_path, chain_path,
-	restart_override, created_at, updated_at`
+	fullchain_path, restart_override, created_at, updated_at`
 
 func scanDomainServer(r rowScanner) (domain.DomainServer, error) {
 	var ds domain.DomainServer
 	err := r.Scan(&ds.DomainID, &ds.ServerID, &ds.InstallMode, &ds.CertPath, &ds.KeyPath,
-		&ds.ChainPath, &ds.RestartOverride, &ds.CreatedAt, &ds.UpdatedAt)
+		&ds.ChainPath, &ds.FullchainPath, &ds.RestartOverride, &ds.CreatedAt, &ds.UpdatedAt)
 	return ds, err
 }
 
@@ -305,18 +305,19 @@ func (s *Store) UpsertDomainServer(ctx context.Context, ds *domain.DomainServer)
 	}
 	err := s.q.QueryRow(ctx, `
 		INSERT INTO domain_servers (domain_id, server_id, install_mode, cert_path, key_path,
-			chain_path, restart_override)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+			chain_path, fullchain_path, restart_override)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (domain_id, server_id) DO UPDATE
 		SET install_mode = EXCLUDED.install_mode,
 		    cert_path = EXCLUDED.cert_path,
 		    key_path = EXCLUDED.key_path,
 		    chain_path = EXCLUDED.chain_path,
+		    fullchain_path = EXCLUDED.fullchain_path,
 		    restart_override = EXCLUDED.restart_override,
 		    updated_at = now()
 		RETURNING created_at, updated_at`,
 		ds.DomainID, ds.ServerID, ds.InstallMode, ds.CertPath, ds.KeyPath, ds.ChainPath,
-		nullableJSON(ds.RestartOverride),
+		ds.FullchainPath, nullableJSON(ds.RestartOverride),
 	).Scan(&ds.CreatedAt, &ds.UpdatedAt)
 	return mapErr("upsert domain server", err)
 }

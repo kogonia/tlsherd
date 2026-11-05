@@ -862,20 +862,31 @@
       const sSel = select('server_id', srv.list.map((s) => [s.id, serverLabel(s)]), '');
       const mode = select('install_mode', [['', 'agent default'], ['symlink', 'symlink'], ['copy', 'copy']], '');
       const inputs = {
-        cert_path: input('cert_path', '', {placeholder: 'relative to the agent cert root'}),
+        cert_path: input('cert_path', '', {placeholder: 'leaf; relative to cert_root'}),
         key_path: input('key_path', ''),
         chain_path: input('chain_path', ''),
+        fullchain_path: input('fullchain_path', '', {placeholder: 'leaf+chain; e.g. {domain}.crt'}),
       };
       const restart = h('textarea', {name: 'restart_override', rows: 3, placeholder: '{"type":"systemd","name":"nginx","reload_only":true}'}, '');
       form.append(
         h('div', {class: 'row'}, field('Server', sSel), field('Install mode', mode)),
-        h('div', {class: 'row'}, field('Certificate path', inputs.cert_path), field('Key path', inputs.key_path), field('Chain path', inputs.chain_path)),
+        h('div', {class: 'row'},
+          field('Certificate path (leaf)', inputs.cert_path),
+          field('Key path', inputs.key_path),
+          field('Chain path', inputs.chain_path),
+          field('Fullchain path', inputs.fullchain_path)),
         field('Restart override (JSON, optional)', restart, 'Optional per-domain override of the agent local restart section. Prefer editing Agent local config on the server page.'),
         h('p', null, h('button', {type: 'submit', class: 'primary'}, 'Save assignment')));
       form.addEventListener('submit', async (ev) => {
         ev.preventDefault();
         if (!sSel.value) { toast('Select a server', 'error'); return; }
-        const body = {install_mode: mode.value, cert_path: inputs.cert_path.value.trim(), key_path: inputs.key_path.value.trim(), chain_path: inputs.chain_path.value.trim()};
+        const body = {
+          install_mode: mode.value,
+          cert_path: inputs.cert_path.value.trim(),
+          key_path: inputs.key_path.value.trim(),
+          chain_path: inputs.chain_path.value.trim(),
+          fullchain_path: inputs.fullchain_path.value.trim(),
+        };
         if (restart.value.trim()) {
           try { body.restart_override = JSON.parse(restart.value); } catch (e) { toast('Restart override is not valid JSON', 'error'); return; }
         }
@@ -886,12 +897,14 @@
         return [
           link('/servers/' + a.server_id, s ? serverLabel(s) : a.server_id),
           a.install_mode || muted('default'),
-          a.cert_path || muted('default'), a.key_path || muted('default'), a.chain_path || muted('default'),
+          a.cert_path || muted('default'), a.key_path || muted('default'),
+          a.chain_path || muted('default'), a.fullchain_path || muted('default'),
           a.restart_override ? code(JSON.stringify(a.restart_override)) : muted('none'),
           btns(
             button('Edit', () => {
               sSel.value = a.server_id; mode.value = a.install_mode || '';
-              inputs.cert_path.value = a.cert_path || ''; inputs.key_path.value = a.key_path || ''; inputs.chain_path.value = a.chain_path || '';
+              inputs.cert_path.value = a.cert_path || ''; inputs.key_path.value = a.key_path || '';
+              inputs.chain_path.value = a.chain_path || ''; inputs.fullchain_path.value = a.fullchain_path || '';
               restart.value = a.restart_override ? json(a.restart_override) : '';
               form.scrollIntoView({behavior: 'smooth'});
             }),
@@ -902,7 +915,7 @@
         ];
       });
       return section('Servers & paths',
-        table(['Server', 'Mode', 'Cert path', 'Key path', 'Chain path', 'Restart override', ''], rows, 'Not assigned to any server.'),
+        table(['Server', 'Mode', 'Cert', 'Key', 'Chain', 'Fullchain', 'Restart override', ''], rows, 'Not assigned to any server.'),
         h('h3', null, 'Assign / update'), form);
     }
 
@@ -1010,10 +1023,12 @@
       const certName = input('cert_name', (src.install && src.install.cert_name) || 'cert.pem');
       const keyName = input('key_name', (src.install && src.install.key_name) || 'key.pem');
       const chainName = input('chain_name', (src.install && src.install.chain_name) || 'chain.pem');
-      const certRoot = input('cert_root', src.cert_root || '', {placeholder: 'optional override'});
-      const certPath = input('cert_path', src.cert_path || '', {placeholder: 'optional {domain} template'});
+      const fullchainName = input('fullchain_name', (src.install && src.install.fullchain_name) || 'fullchain.pem');
+      const certRoot = input('cert_root', src.cert_root || '', {placeholder: 'e.g. /cert (overrides TLSHERD_CERT_ROOT)'});
+      const certPath = input('cert_path', src.cert_path || '', {placeholder: 'leaf; optional {domain}'});
       const keyPath = input('key_path', src.key_path || '');
       const chainPath = input('chain_path', src.chain_path || '');
+      const fullchainPath = input('fullchain_path', src.fullchain_path || '', {placeholder: 'leaf+chain; e.g. {domain}.crt'});
       const confirmBox = h('input', {type: 'checkbox'});
 
       function applyCatalogDefaults(id) {
@@ -1046,6 +1061,7 @@
             cert_name: certName.value.trim() || 'cert.pem',
             key_name: keyName.value.trim() || 'key.pem',
             chain_name: chainName.value.trim() || 'chain.pem',
+            fullchain_name: fullchainName.value.trim() || 'fullchain.pem',
             dir_mode: (src.install && src.install.dir_mode) || '0750',
             key_mode: (src.install && src.install.key_mode) || '0600',
             cert_mode: (src.install && src.install.cert_mode) || '0644',
@@ -1056,6 +1072,7 @@
           cert_path: certPath.value.trim(),
           key_path: keyPath.value.trim(),
           chain_path: chainPath.value.trim(),
+          fullchain_path: fullchainPath.value.trim(),
         };
       }
 
@@ -1086,9 +1103,11 @@
           field('Command (exec / docker reload)', restartCmd, 'One argument per line.')),
         h('fieldset', null, h('legend', null, 'Install & paths'),
           field('Install mode', installMode),
-          field('Cert / key / chain names', h('div', {class: 'row'}, certName, keyName, chainName)),
-          field('Cert root override', certRoot),
-          field('Extra cert / key / chain paths', h('div', {class: 'row'}, certPath, keyPath, chainPath), 'Optional templates with {domain}.')),
+          field('Filenames in versions/current', h('div', {class: 'row'}, certName, keyName, chainName, fullchainName),
+            'fullchain.pem is leaf+intermediates (for nginx ssl_certificate).'),
+          field('Cert root (working directory)', certRoot, 'Where the agent stores <fqdn>/versions and publishes extra paths. Default: TLSHERD_CERT_ROOT (/etc/tls).'),
+          field('Extra publish paths', h('div', {class: 'row'}, certPath, keyPath, chainPath, fullchainPath),
+            'Optional templates with {domain}. Must stay under cert_root. Use fullchain_path for nginx.')),
         h('p', null, h('label', {class: 'check'}, confirmBox, 'I confirm pushing this local config to the agent host')),
         h('p', null, btns(save, resetAll)));
     }
