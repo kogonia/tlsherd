@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -82,16 +81,7 @@ func (a *Agent) writeLocalConfig(lc agentcfg.LocalConfig) error {
 	if err != nil {
 		return err
 	}
-	// Pretty-print on disk for operator edits.
-	var pretty []byte
-	var tmp any
-	if err := json.Unmarshal(raw, &tmp); err == nil {
-		pretty, _ = json.MarshalIndent(tmp, "", "  ")
-		pretty = append(pretty, '\n')
-	}
-	if pretty == nil {
-		pretty = append(raw, '\n')
-	}
+	pretty := prettyJSON(raw)
 	if a.dryRun() {
 		a.local = lc
 		a.localHash, _ = agentcfg.HashLocal(lc)

@@ -60,6 +60,7 @@ func saveState(dir string, st State) error {
 	if err != nil {
 		return fmt.Errorf("marshal state: %w", err)
 	}
+	b = append(b, '\n')
 	if err := os.MkdirAll(dir, stateDirModeDef); err != nil {
 		return fmt.Errorf("create state dir: %w", err)
 	}
@@ -67,6 +68,19 @@ func saveState(dir string, st State) error {
 		return fmt.Errorf("write state: %w", err)
 	}
 	return nil
+}
+
+// prettyJSON re-encodes compact JSON with indentation for operator-readable files.
+func prettyJSON(compact []byte) []byte {
+	var tmp any
+	if err := json.Unmarshal(compact, &tmp); err != nil {
+		return append(append([]byte{}, compact...), '\n')
+	}
+	out, err := json.MarshalIndent(tmp, "", "  ")
+	if err != nil {
+		return append(append([]byte{}, compact...), '\n')
+	}
+	return append(out, '\n')
 }
 
 // writeFileAtomic writes data to a temp file in the same directory, fsyncs,

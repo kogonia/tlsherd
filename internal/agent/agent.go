@@ -315,6 +315,7 @@ func (a *Agent) adoptConfig(cfg agentcfg.Config, version int64) error {
 	if err != nil {
 		return fmt.Errorf("encode config: %w", err)
 	}
+	pretty := prettyJSON(raw)
 	if !a.dryRun() {
 		dir := a.opts.Bootstrap.StateDir
 		cur := filepath.Join(dir, configFileName)
@@ -325,7 +326,7 @@ func (a *Agent) adoptConfig(cfg agentcfg.Config, version int64) error {
 		} else if !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("read config: %w", err)
 		}
-		if err := writeFileAtomic(cur, raw, secretFileMode); err != nil {
+		if err := writeFileAtomic(cur, pretty, secretFileMode); err != nil {
 			return fmt.Errorf("write config: %w", err)
 		}
 	}
