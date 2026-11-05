@@ -443,6 +443,7 @@ These fields stay server-authoritative (local config does **not** own them):
 | `maintenance_window` | `tz`, `days` (1=Mon…7=Sun), `from`/`to` (`HH:MM`) | UTC nightly window |
 | `urgent_threshold` | Apply outside the window if installed cert expires sooner | `72h` |
 | `stage_outside_window` | Download/stage new certs outside the window without activating | `true` |
+| `strict_cert_check` | Refuse install/reload when cert is expired, not yet valid, or critically broken | `true` |
 | `post_check` | After restart, dial `addr` with optional `sni` and compare fingerprint | off |
 | `backups.keep` | How many agent-side backup snapshots to retain | `5` |
 

@@ -201,6 +201,56 @@ func TestOutsideWindowStagesOnly(t *testing.T) {
 	}
 }
 
+func TestStrictCertCheckBlocksExpired(t *testing.T) {
+	e := newEnv(t)
+	cfg := testConfig()
+	cfg.StrictCertCheck = true
+	e.srv.config = cfg
+	e.seedKey()
+	fp1, _ := e.srv.addCert(t, testFQDN, inWindowTime.Add(90*24*time.Hour))
+	e.srv.assign(Assignment{FQDN: testFQDN, Fingerprint: fp1})
+	if err := e.run(false); err != nil {
+		t.Fatal(err)
+	}
+	fpBad, _ := e.srv.addCert(t, testFQDN, inWindowTime.Add(-24*time.Hour))
+	e.srv.assign(Assignment{FQDN: testFQDN, Fingerprint: fpBad})
+	if err := e.run(false); err == nil {
+		t.Fatal("expected expired cert to be rejected")
+	}
+	if link, _ := os.Readlink(filepath.Join(e.certRoot, testFQDN, "current")); link != filepath.Join("versions", fp1) {
+		t.Fatalf("current should stay on good cert, got %s", link)
+	}
+	if res := e.srv.lastResult(t); res.Status != StatusFailed {
+		t.Fatalf("result = %+v", res)
+	}
+}
+
+func TestRollbackToKnownVersionAppliesOutsideWindow(t *testing.T) {
+	e := newEnv(t)
+	e.seedKey()
+	fp1, _ := e.srv.addCert(t, testFQDN, inWindowTime.Add(90*24*time.Hour))
+	e.srv.assign(Assignment{FQDN: testFQDN, Fingerprint: fp1})
+	if err := e.run(false); err != nil {
+		t.Fatal(err)
+	}
+	fp2, _ := e.srv.addCert(t, testFQDN, inWindowTime.Add(90*24*time.Hour))
+	e.srv.assign(Assignment{FQDN: testFQDN, Fingerprint: fp2})
+	if err := e.run(false); err != nil {
+		t.Fatal(err)
+	}
+	e.clock.t = outWindowTime
+	e.srv.assign(Assignment{FQDN: testFQDN, Fingerprint: fp1})
+	if err := e.run(false); err != nil {
+		t.Fatal(err)
+	}
+	if res := e.srv.lastResult(t); res.Status != StatusApplied || res.Fingerprint != fp1 {
+		t.Fatalf("rollback should apply outside window: %+v", res)
+	}
+	if link, _ := os.Readlink(filepath.Join(e.certRoot, testFQDN, "current")); link != filepath.Join("versions", fp1) {
+		t.Fatalf("current after rollback -> %s", link)
+	}
+}
+
 func TestUrgentAppliesOutsideWindow(t *testing.T) {
 	e := newEnv(t)
 	e.seedKey()

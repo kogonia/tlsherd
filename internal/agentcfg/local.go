@@ -20,23 +20,25 @@ const (
 // LocalConfig is the agent-priority host document (agent.local.cfg).
 // It owns service identity, pre-start verify, restart, and cert/install layout.
 type LocalConfig struct {
-	Service  string  `json:"service"`
-	Verify   Verify  `json:"verify"`
-	Restart  Restart `json:"restart"`
-	Install  Install `json:"install"`
-	CertRoot      string `json:"cert_root,omitempty"`       // working cert tree root (overrides TLSHERD_CERT_ROOT)
-	CertPath      string `json:"cert_path,omitempty"`       // extra leaf publish path ({domain} ok)
-	KeyPath       string `json:"key_path,omitempty"`
-	ChainPath     string `json:"chain_path,omitempty"`
-	FullchainPath string `json:"fullchain_path,omitempty"` // extra leaf+chain publish (nginx ssl_certificate)
+	Service       string  `json:"service"`
+	Verify        Verify  `json:"verify"`
+	Restart       Restart `json:"restart"`
+	Install       Install `json:"install"`
+	CertRoot      string  `json:"cert_root,omitempty"` // working cert tree root (overrides TLSHERD_CERT_ROOT)
+	CertPath      string  `json:"cert_path,omitempty"` // extra leaf publish path ({domain} ok)
+	KeyPath       string  `json:"key_path,omitempty"`
+	ChainPath     string  `json:"chain_path,omitempty"`
+	FullchainPath string  `json:"fullchain_path,omitempty"` // extra leaf+chain publish (nginx ssl_certificate)
+	// StrictCertCheck overrides server Config when non-nil.
+	StrictCertCheck *bool `json:"strict_cert_check,omitempty"`
 }
 
 // ServiceInfo describes a built-in catalog entry.
 type ServiceInfo struct {
-	ID          string
-	Label       string
-	Verify      Verify
-	Restart     Restart
+	ID      string
+	Label   string
+	Verify  Verify
+	Restart Restart
 }
 
 // Services returns the built-in web-service catalog.
@@ -239,6 +241,10 @@ func MergeLocal(base, patch LocalConfig) LocalConfig {
 	if patch.FullchainPath != "" {
 		out.FullchainPath = patch.FullchainPath
 	}
+	if patch.StrictCertCheck != nil {
+		v := *patch.StrictCertCheck
+		out.StrictCertCheck = &v
+	}
 	return out
 }
 
@@ -255,6 +261,9 @@ func (lc LocalConfig) IsConfigured() bool {
 		return true
 	}
 	if lc.CertRoot != "" || lc.CertPath != "" || lc.KeyPath != "" || lc.ChainPath != "" || lc.FullchainPath != "" {
+		return true
+	}
+	if lc.StrictCertCheck != nil {
 		return true
 	}
 	return false
@@ -275,6 +284,9 @@ func ApplyLocalToConfig(cfg Config, lc LocalConfig) Config {
 	}
 	if lc.Restart.Type != "" || lc.Restart.Name != "" || len(lc.Restart.Command) > 0 {
 		out.Restart = lc.Restart
+	}
+	if lc.StrictCertCheck != nil {
+		out.StrictCertCheck = *lc.StrictCertCheck
 	}
 	return out
 }

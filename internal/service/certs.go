@@ -515,6 +515,64 @@ func (s *Services) DownloadCertificate(ctx context.Context, actor *domain.User, 
 	return b, nil
 }
 
+// DeleteCertificateVersion removes a non-current version from a domain's history.
+// If the underlying certificate is no longer referenced by any domain, its row
+// and files are removed too. Requires can_write_certs. The current version cannot
+// be deleted (roll back first if needed).
+func (s *Services) DeleteCertificateVersion(ctx context.Context, actor *domain.User, domainID uuid.UUID, version int) error {
+	if err := s.requireDomainPerm(ctx, actor, domainID, permWriteCerts); err != nil {
+		return err
+	}
+	if version <= 0 {
+		return invalidf("version must be positive")
+	}
+	d, err := s.Store.GetDomain(ctx, domainID)
+	if err != nil {
+		return fmt.Errorf("delete certificate version: %w", err)
+	}
+	var orphanFP string
+	err = s.Store.Tx(ctx, func(tx store.Store) error {
+		certID, err := tx.DeleteDomainCertificateVersion(ctx, domainID, version)
+		if err != nil {
+			if errors.Is(err, domain.ErrConflict) {
+				return conflictf("cannot delete the current certificate version")
+			}
+			if errors.Is(err, domain.ErrNotFound) {
+				return notFoundf("version %d does not exist for this domain", version)
+			}
+			return err
+		}
+		ref, err := tx.CertificateReferenced(ctx, certID)
+		if err != nil {
+			return err
+		}
+		if ref {
+			return s.audit(ctx, tx, actor, "certificate.version_delete", "domain", d.ID.String(),
+				map[string]any{"version": version, "certificate_id": certID, "orphaned": false})
+		}
+		c, err := tx.GetCertificate(ctx, certID)
+		if err != nil {
+			return err
+		}
+		orphanFP = c.FingerprintSHA256
+		if err := tx.DeleteCertificate(ctx, certID); err != nil {
+			return err
+		}
+		return s.audit(ctx, tx, actor, "certificate.version_delete", "domain", d.ID.String(),
+			map[string]any{"version": version, "fingerprint": orphanFP, "orphaned": true})
+	})
+	if err != nil {
+		return fmt.Errorf("delete certificate version: %w", err)
+	}
+	if orphanFP != "" {
+		if err := s.removeCertFiles(orphanFP); err != nil {
+			s.log().Warn("remove certificate files failed", "component", "service", "operation", "delete_certificate_version",
+				"fingerprint", orphanFP, "error", err)
+		}
+	}
+	return nil
+}
+
 // DeleteCertificate removes a certificate that is not current for any domain,
 // then its files. Admin only.
 func (s *Services) DeleteCertificate(ctx context.Context, actor *domain.User, fingerprint string) error {

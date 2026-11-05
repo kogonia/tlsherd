@@ -245,6 +245,23 @@ func (h *Handler) rollback(w http.ResponseWriter, r *http.Request, u *domain.Use
 	writeJSON(w, http.StatusOK, out)
 }
 
+func (h *Handler) deleteCertificateVersion(w http.ResponseWriter, r *http.Request, u *domain.User) {
+	id, ok := h.pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	ver, err := strconv.Atoi(r.PathValue("version"))
+	if err != nil || ver <= 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid", "invalid version")
+		return
+	}
+	if err := h.svc.DeleteCertificateVersion(r.Context(), u, id, ver); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *Handler) getCertificate(w http.ResponseWriter, r *http.Request, u *domain.User) {
 	out, err := h.svc.GetCertificate(r.Context(), u, r.PathValue("fingerprint"))
 	if err != nil {

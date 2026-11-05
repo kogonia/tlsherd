@@ -31,10 +31,10 @@ type ServerLocalConfigView struct {
 
 // ServiceCatalogEntry is exposed to the UI.
 type ServiceCatalogEntry struct {
-	ID      string            `json:"id"`
-	Label   string            `json:"label"`
-	Verify  agentcfg.Verify   `json:"verify"`
-	Restart agentcfg.Restart  `json:"restart"`
+	ID      string           `json:"id"`
+	Label   string           `json:"label"`
+	Verify  agentcfg.Verify  `json:"verify"`
+	Restart agentcfg.Restart `json:"restart"`
 }
 
 // SetLocalConfigInput is an admin edit of the agent's local config.
@@ -259,6 +259,8 @@ func resetLocalField(lc agentcfg.LocalConfig, field string) (agentcfg.LocalConfi
 		lc.FullchainPath = ""
 	case "cert_root":
 		lc.CertRoot = ""
+	case "strict_cert_check":
+		lc.StrictCertCheck = nil
 	case "service":
 		return agentcfg.ApplyServiceDefaults(lc, lc.Service)
 	default:
@@ -266,4 +268,3 @@ func resetLocalField(lc agentcfg.LocalConfig, field string) (agentcfg.LocalConfi
 	}
 	return lc, nil
 }
-

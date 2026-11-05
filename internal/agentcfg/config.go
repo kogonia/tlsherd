@@ -12,24 +12,27 @@ import (
 
 // Config is the server-authoritative agent configuration document.
 type Config struct {
-	EnrollInterval     Duration         `json:"enroll_interval"`
-	PollInterval       Duration         `json:"poll_interval"`
-	Jitter             float64          `json:"jitter"`
+	EnrollInterval     Duration          `json:"enroll_interval"`
+	PollInterval       Duration          `json:"poll_interval"`
+	Jitter             float64           `json:"jitter"`
 	MaintenanceWindow  MaintenanceWindow `json:"maintenance_window"`
-	UrgentThreshold    Duration         `json:"urgent_threshold"`
-	StageOutsideWindow bool             `json:"stage_outside_window"`
-	Install            Install          `json:"install"`
-	Verify             Verify           `json:"verify"`
-	Restart            Restart          `json:"restart"`
-	PostCheck          PostCheck        `json:"post_check"`
-	Backups            Backups          `json:"backups"`
+	UrgentThreshold    Duration          `json:"urgent_threshold"`
+	StageOutsideWindow bool              `json:"stage_outside_window"`
+	// StrictCertCheck refuses to install/activate expired, not-yet-valid, or
+	// critically broken certificates (key mismatch already hard-fails parse).
+	StrictCertCheck bool      `json:"strict_cert_check"`
+	Install         Install   `json:"install"`
+	Verify          Verify    `json:"verify"`
+	Restart         Restart   `json:"restart"`
+	PostCheck       PostCheck `json:"post_check"`
+	Backups         Backups   `json:"backups"`
 }
 
 type MaintenanceWindow struct {
-	TZ   string   `json:"tz"`
-	Days []int    `json:"days"` // 1=Mon .. 7=Sun
-	From string   `json:"from"` // HH:MM
-	To   string   `json:"to"`
+	TZ   string `json:"tz"`
+	Days []int  `json:"days"` // 1=Mon .. 7=Sun
+	From string `json:"from"` // HH:MM
+	To   string `json:"to"`
 }
 
 type Install struct {
@@ -106,6 +109,7 @@ func Default() Config {
 		},
 		UrgentThreshold:    Duration(72 * time.Hour),
 		StageOutsideWindow: true,
+		StrictCertCheck:    true,
 		Install: Install{
 			Mode:          "symlink",
 			CertName:      "cert.pem",
@@ -232,13 +236,20 @@ func Parse(b []byte) (Config, error) {
 		return Config{}, err
 	}
 	merged := Merge(base, overlay)
-	// Preserve explicit false for stage_outside_window from raw JSON when present.
+	// Preserve explicit false for bools that default true (Merge cannot tell unset from false).
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(b, &raw); err == nil {
-		if v, ok := raw["stage_outside_window"]; ok {
-			var s bool
-			if json.Unmarshal(v, &s) == nil {
-				merged.StageOutsideWindow = s
+		for _, key := range []string{"stage_outside_window", "strict_cert_check"} {
+			if v, ok := raw[key]; ok {
+				var s bool
+				if json.Unmarshal(v, &s) == nil {
+					switch key {
+					case "stage_outside_window":
+						merged.StageOutsideWindow = s
+					case "strict_cert_check":
+						merged.StrictCertCheck = s
+					}
+				}
 			}
 		}
 	}

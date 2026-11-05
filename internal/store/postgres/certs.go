@@ -201,6 +201,40 @@ func (s *Store) GetDomainCertificateByVersion(ctx context.Context, domainID uuid
 		domainID, version)
 }
 
+// DeleteDomainCertificateVersion removes a non-current history row.
+// Returns domain.ErrConflict when the version is current, or ErrNotFound when missing.
+func (s *Store) DeleteDomainCertificateVersion(ctx context.Context, domainID uuid.UUID, version int) (uuid.UUID, error) {
+	var certID uuid.UUID
+	var current bool
+	err := s.q.QueryRow(ctx, `
+		SELECT certificate_id, is_current FROM domain_certificates
+		WHERE domain_id = $1 AND version = $2`, domainID, version).Scan(&certID, &current)
+	if err != nil {
+		return uuid.Nil, mapErr("get domain certificate version", err)
+	}
+	if current {
+		return uuid.Nil, fmt.Errorf("%w: cannot delete the current certificate version", domain.ErrConflict)
+	}
+	tag, err := s.q.Exec(ctx,
+		`DELETE FROM domain_certificates WHERE domain_id = $1 AND version = $2 AND NOT is_current`,
+		domainID, version)
+	if err != nil {
+		return uuid.Nil, mapErr("delete domain certificate version", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return uuid.Nil, fmt.Errorf("%w: delete domain certificate version", domain.ErrNotFound)
+	}
+	return certID, nil
+}
+
+// CertificateReferenced reports whether any domain history row still points at id.
+func (s *Store) CertificateReferenced(ctx context.Context, id uuid.UUID) (bool, error) {
+	var ref bool
+	err := s.q.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM domain_certificates WHERE certificate_id = $1)`, id).Scan(&ref)
+	return ref, mapErr("certificate referenced", err)
+}
+
 // MaxDomainCertVersion returns the highest version of the domain, or 0 if none.
 func (s *Store) MaxDomainCertVersion(ctx context.Context, domainID uuid.UUID) (int, error) {
 	var v int

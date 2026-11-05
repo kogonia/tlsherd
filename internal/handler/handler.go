@@ -126,6 +126,7 @@ func (h *Handler) mountAdminAPI(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/domains/{id}/certificates", h.authed(h.listCertificateVersions))
 	mux.Handle("GET /api/v1/domains/{id}/certificates/current", h.authed(h.getCurrentCertificate))
 	mux.Handle("POST /api/v1/domains/{id}/rollback", h.authed(h.rollback))
+	mux.Handle("DELETE /api/v1/domains/{id}/certificates/{version}", h.authed(h.deleteCertificateVersion))
 	mux.Handle("GET /api/v1/certificates/{fingerprint}", h.authed(h.getCertificate))
 	mux.Handle("GET /api/v1/certificates/{fingerprint}/cert", h.authed(h.downloadCertPart(service.PartCert)))
 	mux.Handle("GET /api/v1/certificates/{fingerprint}/chain", h.authed(h.downloadCertPart(service.PartChain)))

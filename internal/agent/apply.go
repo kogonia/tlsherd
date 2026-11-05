@@ -88,8 +88,12 @@ func (a *Agent) processDomain(ctx context.Context, asg Assignment) error {
 	if c := readInstalledCert(l, rt.Install.CertName); c != nil {
 		urgent = agentcfg.IsUrgent(c.NotAfter, a.cfg.UrgentThreshold.Std(), now)
 	}
-	if inWindow || urgent {
-		return a.apply(ctx, l, asg, ds, urgent && !inWindow)
+	// A fingerprint already present under versions/ (and not merely waiting as
+	// StagedFingerprint) is a rollback/reactivation — apply even outside the window.
+	_, verErr := os.Stat(l.versionDir(asg.Fingerprint))
+	knownVersion := verErr == nil && ds.StagedFingerprint != asg.Fingerprint
+	if inWindow || urgent || knownVersion {
+		return a.apply(ctx, l, asg, ds, (urgent || knownVersion) && !inWindow)
 	}
 	return a.stage(ctx, l, asg, ds)
 }
@@ -133,6 +137,11 @@ func (a *Agent) fetchValidated(ctx context.Context, l layout, asg Assignment) (*
 	if !certutil.CoversDomain(p.SANs, p.SubjectCN, asg.FQDN) {
 		return nil, errors.New("validate: certificate does not cover domain")
 	}
+	if a.runtimeCFG().StrictCertCheck {
+		if probs := p.CriticalProblems(); len(probs) > 0 {
+			return nil, fmt.Errorf("validate: %s", strings.Join(probs, "; "))
+		}
+	}
 	return p, nil
 }
 
@@ -143,6 +152,8 @@ func (a *Agent) stage(ctx context.Context, l layout, asg Assignment, ds DomainSt
 		return nil
 	}
 	if ds.StagedFingerprint == asg.Fingerprint {
+		log.Info("already staged; waiting for maintenance window to activate",
+			"fingerprint", asg.Fingerprint)
 		return nil
 	}
 	res := ApplyResult{ApplyID: uuid.NewString(), FQDN: asg.FQDN, Fingerprint: asg.Fingerprint, PreviousFingerprint: ds.Fingerprint}

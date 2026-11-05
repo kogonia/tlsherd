@@ -332,6 +332,8 @@
       {p: 'maintenance_window.to', l: 'To', t: 'text', help: 'HH:MM'},
       {p: 'urgent_threshold', l: 'Urgent threshold', t: 'text', help: 'Apply outside the window when the installed certificate expires sooner than this.'},
       {p: 'stage_outside_window', l: 'Stage new certificates outside the window', t: 'bool'},
+      {p: 'strict_cert_check', l: 'Validate certificate before install/reload', t: 'bool',
+        help: 'When on, the agent refuses expired, not-yet-valid, or critically broken certs (no file update, no restart). Key mismatch always fails.'},
     ]},
     {group: 'Post-install TLS check', fields: [
       {p: 'post_check.enabled', l: 'Enabled', t: 'bool'},
@@ -846,15 +848,20 @@
           expiryBadge(c.not_after),
           h('div', {class: 'small'}, fmt(v.activated_at), v.reason ? h('div', {class: 'muted'}, v.reason) : null),
           h('div', {class: 'small'}, dl('cert'), ' · ', dl('chain'), ' · ', dl('key')),
-          v.is_current ? '' : button('Roll back', async (b) => {
-            const reason = prompt('Reason for rolling back to v' + v.version + ' (optional):', '');
-            if (reason === null) return;
-            if (await act(b, () => api('POST', base + '/rollback', {version: v.version, reason}), 'Rolled back to v' + v.version)) reload();
-          }),
+          v.is_current ? muted('current') : btns(
+            button('Roll back', async (b) => {
+              const reason = prompt('Reason for rolling back to v' + v.version + ' (optional):', '');
+              if (reason === null) return;
+              if (await act(b, () => api('POST', base + '/rollback', {version: v.version, reason}), 'Rolled back to v' + v.version)) reload();
+            }),
+            button('Delete', async (b) => {
+              if (!confirm('Delete version v' + v.version + ' from this domain history? The current version cannot be deleted.')) return;
+              if (await act(b, () => api('DELETE', base + '/certificates/' + v.version), 'Version deleted')) reload();
+            }, 'danger')),
         ];
       });
       return section('Versions', table(['Version', '', 'Fingerprint', 'Subject CN', 'Expires', 'Activated', 'Download', ''], rows, 'No certificate uploaded yet.'),
-        h('p', {class: 'help'}, 'Rollback re-activates an older version; agents install it on their next poll.'));
+        h('p', {class: 'help'}, 'Rollback re-activates an older version. Delete removes a non-current version from history (and unused certificate files).'));
     }
 
     async function assignSection() {
@@ -1052,6 +1059,7 @@
       const keyPath = input('key_path', src.key_path || '');
       const chainPath = input('chain_path', src.chain_path || '');
       const fullchainPath = input('fullchain_path', src.fullchain_path || '', {placeholder: 'leaf+chain; e.g. {domain}.crt'});
+      const strictCert = h('input', {type: 'checkbox', checked: src.strict_cert_check !== false});
       const confirmBox = h('input', {type: 'checkbox'});
 
       function applyCatalogDefaults(id) {
@@ -1096,6 +1104,7 @@
           key_path: keyPath.value.trim(),
           chain_path: chainPath.value.trim(),
           fullchain_path: fullchainPath.value.trim(),
+          strict_cert_check: strictCert.checked,
         };
       }
 
@@ -1130,7 +1139,8 @@
             'fullchain.pem is leaf+intermediates (for nginx ssl_certificate).'),
           field('Cert root (working directory)', certRoot, 'Where the agent stores <fqdn>/versions and publishes extra paths. Default: TLSHERD_CERT_ROOT (/etc/tls).'),
           field('Extra publish paths', h('div', {class: 'row'}, certPath, keyPath, chainPath, fullchainPath),
-            'Optional templates with {domain}. Must stay under cert_root. Use fullchain_path for nginx.')),
+            'Optional templates with {domain}. Must stay under cert_root. Use fullchain_path for nginx.'),
+          h('label', {class: 'check'}, strictCert, 'Validate certificate before install/reload (overrides server schedule when set)')),
         h('p', null, h('label', {class: 'check'}, confirmBox, 'I confirm pushing this local config to the agent host')),
         h('p', null, btns(save, resetAll)));
     }

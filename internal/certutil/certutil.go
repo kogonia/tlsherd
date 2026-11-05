@@ -119,6 +119,25 @@ func Fingerprint(der []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// CriticalProblems lists soft parse issues that should block install when
+// strict_cert_check is enabled. Key mismatch already fails ParseBundle.
+func (p *Parsed) CriticalProblems() []string {
+	if p == nil {
+		return []string{"nil certificate"}
+	}
+	var out []string
+	if p.Expired {
+		out = append(out, "certificate expired")
+	}
+	if p.NotYetValid {
+		out = append(out, "certificate not yet valid")
+	}
+	if strings.Contains(p.ChainWarning, "chain issuer mismatch") {
+		out = append(out, p.ChainWarning)
+	}
+	return out
+}
+
 func CoversDomain(sans []string, cn, fqdn string) bool {
 	fqdn = strings.ToLower(strings.TrimSuffix(fqdn, "."))
 	names := append([]string{}, sans...)

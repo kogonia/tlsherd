@@ -68,6 +68,10 @@ type Store interface {
 	ListDomainCertificates(ctx context.Context, domainID uuid.UUID) ([]domain.DomainCertificate, error)
 	GetCurrentDomainCertificate(ctx context.Context, domainID uuid.UUID) (*domain.DomainCertificate, error)
 	GetDomainCertificateByVersion(ctx context.Context, domainID uuid.UUID, version int) (*domain.DomainCertificate, error)
+	// DeleteDomainCertificateVersion removes a non-current history row; returns its certificate_id.
+	DeleteDomainCertificateVersion(ctx context.Context, domainID uuid.UUID, version int) (certificateID uuid.UUID, err error)
+	// CertificateReferenced reports whether any domain_certificates row points at id.
+	CertificateReferenced(ctx context.Context, id uuid.UUID) (bool, error)
 	MaxDomainCertVersion(ctx context.Context, domainID uuid.UUID) (int, error)
 
 	// Servers / enrollment
