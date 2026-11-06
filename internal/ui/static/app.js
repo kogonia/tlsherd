@@ -2048,12 +2048,42 @@
         setTimeout(() => { location.href = '/login'; }, 800);
       }
     });
+    const kv = [
+      h('dt', null, 'Login'), h('dd', null, u.login),
+    ];
+    if (adminSet) {
+      kv.push(h('dt', null, 'Name'), h('dd', null, u.display_name || '—'));
+    }
+    kv.push(
+      h('dt', null, 'Role'), h('dd', null, badge(u.role)),
+      h('dt', null, 'Last login'), h('dd', null, fmt(u.last_login_at)));
+    const profileBits = [h('dl', {class: 'kv'}, ...kv)];
+    if (!adminSet) {
+      const nameIn = input('display_name', u.display_name || '', {required: true, maxlength: 128});
+      const nameForm = h('form', {class: 'row'},
+        field('Display name', nameIn),
+        h('button', {type: 'submit', class: 'primary'}, 'Save name'));
+      nameForm.addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        const name = nameIn.value.trim();
+        if (!name) {
+          toast('Display name must not be empty.', 'error');
+          return;
+        }
+        await act(nameForm.querySelector('button'), async () => {
+          const saved = await api('PATCH', '/users/' + u.id, {display_name: name});
+          const link = document.getElementById('account-link');
+          if (link && saved && saved.display_name) {
+            link.textContent = saved.display_name;
+            link.title = (saved.login || u.login) + ' (' + (saved.role || u.role) + ')';
+          }
+          u.display_name = saved.display_name;
+        }, 'Name saved');
+      });
+      profileBits.push(nameForm);
+    }
     kids.push(
-      section('Profile', h('dl', {class: 'kv'},
-        h('dt', null, 'Login'), h('dd', null, u.login),
-        h('dt', null, 'Name'), h('dd', null, u.display_name || '—'),
-        h('dt', null, 'Role'), h('dd', null, badge(u.role)),
-        h('dt', null, 'Last login'), h('dd', null, fmt(u.last_login_at)))),
+      section('Profile', ...profileBits),
       section(force || adminSet ? 'Set a new password' : 'Change password', form));
     root.replaceChildren(...kids);
   };

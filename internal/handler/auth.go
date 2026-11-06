@@ -90,7 +90,7 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request, u *domain.User) {
 }
 
 type patchMeRequest struct {
-	Theme *string `json:"theme"`
+	Theme string `json:"theme"`
 }
 
 func (h *Handler) patchMe(w http.ResponseWriter, r *http.Request, u *domain.User) {
@@ -98,11 +98,7 @@ func (h *Handler) patchMe(w http.ResponseWriter, r *http.Request, u *domain.User
 	if !h.decodeJSON(w, r, &req, false) {
 		return
 	}
-	if req.Theme == nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid", "theme is required")
-		return
-	}
-	out, err := h.svc.UpdateOwnPreferences(r.Context(), u, *req.Theme)
+	out, err := h.svc.UpdateOwnTheme(r.Context(), u, req.Theme)
 	if err != nil {
 		h.fail(w, r, err)
 		return

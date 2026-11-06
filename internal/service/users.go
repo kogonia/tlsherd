@@ -85,12 +85,17 @@ func (s *Services) CreateUser(ctx context.Context, actor *domain.User, in Create
 	return u, nil
 }
 
-// UpdateUser applies in to user id. Invariants: an actor cannot change their
-// own role or deactivate themselves; the last active admin cannot be demoted
-// or deactivated.
+// UpdateUser applies in to user id. Any authenticated user may change their own
+// display_name. Role / is_active (and updates to other users) require admin.
+// Invariants: an actor cannot change their own role or deactivate themselves;
+// the last active admin cannot be demoted or deactivated.
 func (s *Services) UpdateUser(ctx context.Context, actor *domain.User, id uuid.UUID, in UpdateUserInput) (*domain.User, error) {
-	if err := requireAdmin(actor); err != nil {
-		return nil, err
+	self := id == actor.ID
+	adminOnly := !self || in.Role != nil || in.IsActive != nil
+	if adminOnly {
+		if err := requireAdmin(actor); err != nil {
+			return nil, err
+		}
 	}
 	var out *domain.User
 	err := s.Store.Tx(ctx, func(tx store.Store) error {
@@ -115,14 +120,14 @@ func (s *Services) UpdateUser(ctx context.Context, actor *domain.User, id uuid.U
 			if !validRole(*in.Role) {
 				return invalidf("role must be %q or %q", domain.RoleAdmin, domain.RoleOperator)
 			}
-			if id == actor.ID {
+			if self {
 				return domain.ErrSelfModification
 			}
 			changes["role"] = *in.Role
 			u.Role = *in.Role
 		}
 		if in.IsActive != nil && *in.IsActive != u.IsActive {
-			if !*in.IsActive && id == actor.ID {
+			if !*in.IsActive && self {
 				return domain.ErrSelfModification
 			}
 			changes["is_active"] = *in.IsActive

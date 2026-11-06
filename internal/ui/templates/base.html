@@ -26,7 +26,7 @@
         <span class="theme-toggle-icon theme-moon">☾</span>
       </span>
     </button>
-    <a href="/account"{{if eq .Page "account"}} class="active"{{end}}>{{.User.Login}} <span class="badge">{{.User.Role}}</span></a>
+    <a href="/account"{{if eq .Page "account"}} class="active"{{end}} id="account-link" title="{{.User.Login}} ({{.User.Role}})">{{if .User.DisplayName}}{{.User.DisplayName}}{{else}}{{.User.Login}}{{end}}</a>
     <button type="button" id="logout" class="link" hx-post="/api/v1/auth/logout" hx-swap="none">Sign out</button>
   </div>
 </header>

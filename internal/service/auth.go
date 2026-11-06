@@ -217,8 +217,8 @@ func (s *Services) ChangeOwnPassword(ctx context.Context, actor *domain.User, ol
 	return nil
 }
 
-// UpdateOwnPreferences updates the actor's personal UI preferences (theme).
-func (s *Services) UpdateOwnPreferences(ctx context.Context, actor *domain.User, theme string) (*domain.User, error) {
+// UpdateOwnTheme updates the actor's UI theme preference.
+func (s *Services) UpdateOwnTheme(ctx context.Context, actor *domain.User, theme string) (*domain.User, error) {
 	theme = normalizeText(theme)
 	if !domain.ValidTheme(theme) {
 		return nil, invalidf("theme must be %q or %q", domain.ThemeLight, domain.ThemeDark)
@@ -242,7 +242,7 @@ func (s *Services) UpdateOwnPreferences(ctx context.Context, actor *domain.User,
 			map[string]any{"theme": theme})
 	})
 	if err != nil {
-		return nil, fmt.Errorf("update preferences: %w", err)
+		return nil, fmt.Errorf("update theme: %w", err)
 	}
 	return out, nil
 }
