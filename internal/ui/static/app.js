@@ -1318,10 +1318,14 @@
       }
 
       const svcSel = select('service', services.length ? services : [['custom', 'Custom']], src.service || 'custom');
+      const deploySel = select('start_method', [
+        ['systemd', 'systemd'],
+        ['docker', 'docker'],
+        ['exec', 'Custom command'],
+      ], (src.restart && src.restart.type) || 'systemd');
       const verifyCmd = h('textarea', {name: 'verify_command', rows: 3}, (src.verify && src.verify.command || []).join('\n'));
       const verifyTimeout = input('verify_timeout', (src.verify && src.verify.timeout) || '30s');
       const verifyPreview = h('div', {class: 'cmd-preview'});
-      const restartType = select('restart_type', ['systemd', 'docker', 'exec'], (src.restart && src.restart.type) || 'systemd');
       const restartName = input('restart_name', (src.restart && src.restart.name) || '');
       const reloadOnly = h('input', {type: 'checkbox', checked: !!(src.restart && src.restart.reload_only)});
       const restartCmd = h('textarea', {name: 'restart_command', rows: 3}, (src.restart && src.restart.command || []).join('\n'));
@@ -1329,8 +1333,7 @@
       const reloadField = h('label', {class: 'check'}, reloadOnly, 'Reload instead of restart');
       const cmdField = field('Command', restartCmd, 'One argument per line. Supports {domain}.');
       const restartPreview = h('div', {class: 'cmd-preview'});
-      const restartFields = h('div', {class: 'restart-fields'},
-        field('Type', restartType), nameField, reloadField, cmdField, restartPreview);
+      const restartFields = h('div', {class: 'restart-fields'}, nameField, reloadField, cmdField, restartPreview);
       const installMode = select('install_mode', ['symlink', 'copy'], (src.install && src.install.mode) || 'symlink');
       const certName = input('cert_name', (src.install && src.install.cert_name) || 'cert.pem');
       const keyName = input('key_name', (src.install && src.install.key_name) || 'key.pem');
@@ -1346,8 +1349,48 @@
 
       const lines = (t) => t.value.split('\n').map((x) => x.trim()).filter(Boolean);
 
+      // composePreset mirrors agentcfg.ServiceInfo.Preset (web × deploy).
+      function composePreset(c, deploy, name) {
+        const n = (name || (c && c.default_name) || '').trim();
+        const baseVerify = (c && c.verify_command) || (c && c.verify && c.verify.command) || [];
+        const reload = (c && c.reload_command) || [];
+        const timeout = '30s';
+        if (deploy === 'docker') {
+          return {
+            verify: {command: (n && baseVerify.length) ? ['docker', 'exec', n].concat(baseVerify) : baseVerify.slice(), timeout},
+            restart: {type: 'docker', name: n, reload_only: reload.length > 0, command: reload.slice()},
+          };
+        }
+        if (deploy === 'exec') {
+          const cmd = reload.length ? reload.slice() : baseVerify.slice();
+          return {
+            verify: {command: baseVerify.slice(), timeout},
+            restart: {type: 'exec', name: '', reload_only: false, command: cmd},
+          };
+        }
+        return {
+          verify: {command: baseVerify.slice(), timeout},
+          restart: {type: 'systemd', name: n, reload_only: true, command: []},
+        };
+      }
+
+      function applyPreset(opts) {
+        const c = catalog.get(svcSel.value);
+        if (!c && svcSel.value !== 'custom') return;
+        const deploy = deploySel.value || 'systemd';
+        const keepName = opts && opts.keepName ? restartName.value.trim() : '';
+        const preset = composePreset(c || {default_name: '', verify_command: [], reload_command: []}, deploy, keepName);
+        verifyCmd.value = (preset.verify.command || []).join('\n');
+        verifyTimeout.value = preset.verify.timeout || '30s';
+        restartName.value = preset.restart.name || '';
+        reloadOnly.checked = !!preset.restart.reload_only;
+        restartCmd.value = (preset.restart.command || []).join('\n');
+        syncRestartFields();
+        syncVerifyPreview();
+      }
+
       function syncRestartFields() {
-        const t = restartType.value || 'systemd';
+        const t = deploySel.value || 'systemd';
         const showName = t === 'systemd' || t === 'docker';
         const showReload = t === 'systemd' || t === 'docker';
         const showCmd = t === 'exec' || (t === 'docker' && reloadOnly.checked);
@@ -1362,42 +1405,62 @@
           reloadField.lastChild.textContent = 'Reload instead of restart (systemctl reload)';
         } else if (t === 'docker') {
           restartName.placeholder = 'container name';
-          reloadField.lastChild.textContent = 'Reload via docker exec (needs command below)';
+          reloadField.lastChild.textContent = 'Reload via docker exec (uses command below)';
         }
         if (cmdField.firstChild && cmdField.firstChild.nodeType === 3) {
-          cmdField.firstChild.textContent = t === 'docker' ? 'Exec command (inside container)' : 'Command';
+          cmdField.firstChild.textContent = t === 'docker' ? 'Exec command (inside container)' : t === 'exec' ? 'Custom command' : 'Command';
         }
         const argv = previewRestartArgv(t, restartName.value.trim(), reloadOnly.checked, lines(restartCmd), sampleDomain);
         restartPreview.replaceChildren(
           h('span', {class: 'label'}, 'Agent will run'),
-          argv ? code(argv.join(' ')) : muted(t === 'exec' ? 'Set a command' : t === 'docker' && reloadOnly.checked ? 'Set container name and exec command' : 'Set unit / container name'));
+          argv ? code(argv.join(' ')) : muted(t === 'exec' ? 'Set a custom command' : t === 'docker' && reloadOnly.checked ? 'Set container name and exec command' : 'Set unit / container name'));
       }
 
       function syncVerifyPreview() {
-        const argv = lines(verifyCmd);
+        let argv = lines(verifyCmd);
+        // Match agent WrapVerifyArgv for legacy nginx -t + docker start method.
+        if ((deploySel.value || 'systemd') === 'docker') {
+          const name = restartName.value.trim();
+          if (name && argv.length && argv[0] !== 'docker') {
+            argv = ['docker', 'exec', name].concat(argv);
+          }
+        }
         verifyPreview.replaceChildren(
-          h('span', {class: 'label'}, 'Agent will run before restart'),
+          h('span', {class: 'label'}, 'Agent will run (pre-start validation)'),
           argv.length ? code(argv.join(' ')) : muted('Disabled (empty command)'));
       }
 
-      function applyCatalogDefaults(id) {
-        const c = catalog.get(id);
-        if (!c) return;
-        verifyCmd.value = (c.verify && c.verify.command || []).join('\n');
-        verifyTimeout.value = (c.verify && c.verify.timeout) || '30s';
-        restartType.value = (c.restart && c.restart.type) || 'systemd';
-        restartName.value = (c.restart && c.restart.name) || '';
-        reloadOnly.checked = !!(c.restart && c.restart.reload_only);
-        restartCmd.value = (c.restart && c.restart.command || []).join('\n');
+      function retargetDockerVerify(oldName, newName) {
+        const argv = lines(verifyCmd);
+        if (argv[0] === 'docker' && argv[1] === 'exec' && argv[2] === oldName && newName) {
+          argv[2] = newName;
+          verifyCmd.value = argv.join('\n');
+        }
+      }
+
+      let lastName = restartName.value.trim();
+      function onWebOrDeployChange() {
+        const webLabel = svcSel.options[svcSel.selectedIndex] ? svcSel.options[svcSel.selectedIndex].textContent : svcSel.value;
+        const startLabel = deploySel.options[deploySel.selectedIndex] ? deploySel.options[deploySel.selectedIndex].textContent : deploySel.value;
+        if (!confirm('Fill pre-start and restart for ' + webLabel + ' + ' + startLabel + '?')) return;
+        applyPreset({keepName: false});
+        lastName = restartName.value.trim();
+      }
+      svcSel.addEventListener('change', onWebOrDeployChange);
+      deploySel.addEventListener('change', onWebOrDeployChange);
+      restartName.addEventListener('change', () => {
+        const n = restartName.value.trim();
+        if ((deploySel.value || 'systemd') === 'docker' && lastName && n && lastName !== n) {
+          retargetDockerVerify(lastName, n);
+        }
+        lastName = n;
         syncRestartFields();
         syncVerifyPreview();
-      }
-      svcSel.addEventListener('change', () => {
-        if (confirm('Fill verify/restart from the ' + svcSel.value + ' catalog defaults?')) applyCatalogDefaults(svcSel.value);
       });
-      [restartType, restartName, reloadOnly, restartCmd].forEach((el) => {
-        el.addEventListener('change', syncRestartFields);
-        el.addEventListener('input', syncRestartFields);
+      restartName.addEventListener('input', () => { syncRestartFields(); syncVerifyPreview(); });
+      [reloadOnly, restartCmd].forEach((el) => {
+        el.addEventListener('change', () => { syncRestartFields(); syncVerifyPreview(); });
+        el.addEventListener('input', () => { syncRestartFields(); syncVerifyPreview(); });
       });
       [verifyCmd].forEach((el) => {
         el.addEventListener('input', syncVerifyPreview);
@@ -1407,7 +1470,7 @@
       syncVerifyPreview();
 
       function readLocal() {
-        const t = restartType.value || 'systemd';
+        const t = deploySel.value || 'systemd';
         const restart = {type: t, name: '', reload_only: false, command: []};
         if (t === 'systemd') {
           restart.name = restartName.value.trim();
@@ -1449,10 +1512,12 @@
         const body = {config: readLocal(), confirm: true};
         if (await act(b, () => api('PUT', base + '/local-config', body), 'Local config queued for agent')) reload();
       }, 'primary');
-      const resetAll = button('Reset all to service defaults', async (b) => {
+      const resetAll = button('Reset to web × start-method defaults', async (b) => {
         if (!confirmBox.checked) { toast('Confirm first.', 'error'); return; }
-        if (!confirm('Reset verify and restart to catalog defaults for ' + svcSel.value + '?')) return;
-        if (await act(b, () => api('PUT', base + '/local-config', {reset_all: true, service: svcSel.value, confirm: true}), 'Defaults queued')) reload();
+        if (!confirm('Reset pre-start and restart for ' + svcSel.value + ' + ' + deploySel.value + '?')) return;
+        applyPreset({keepName: true});
+        const body = {config: readLocal(), confirm: true};
+        if (await act(b, () => api('PUT', base + '/local-config', body), 'Defaults queued')) reload();
       });
 
       return h('div', null,
@@ -1460,9 +1525,12 @@
         h('div', {class: 'banner warn'},
           'Agent-priority settings on the host ($TLSHERD_AGENT_DIR/agent.local.cfg, default /var/lib/tlsherd-agent/). Saving queues a push on the next poll; the agent keeps one previous version as .prev.'),
         h('fieldset', null, h('legend', null, 'Service'),
-          field('Service type', svcSel, 'Selecting a service can fill catalog defaults for verify/restart.')),
-        h('fieldset', null, h('legend', null, 'Pre-start check (verify)'),
-          field('Command', verifyCmd, 'One argument per line, e.g. nginx then -t. Empty disables the check.'),
+          h('div', {class: 'row'},
+            field('Web service', svcSel, 'Software that serves TLS (fills verify/reload recipes).'),
+            field('Start method', deploySel, 'How the agent signals that software after a cert update (systemd, docker, or a custom command).')),
+          h('p', {class: 'help'}, 'Changing either refills pre-start validation and restart for that combination (e.g. nginx + docker → docker exec … nginx -t).')),
+        h('fieldset', null, h('legend', null, 'Pre-start (validation)'),
+          field('Command', verifyCmd, 'One argument per line. Empty disables the check. Runs after files are switched, before restart.'),
           field('Timeout', verifyTimeout),
           verifyPreview),
         h('fieldset', null, h('legend', null, 'Restart'), restartFields),

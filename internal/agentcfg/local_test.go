@@ -1,6 +1,7 @@
 package agentcfg
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -8,17 +9,52 @@ func TestServicesCatalog(t *testing.T) {
 	ids := map[string]bool{}
 	for _, s := range Services() {
 		ids[s.ID] = true
+		if s.ID != ServiceCustom && len(s.VerifyCommand) == 0 {
+			t.Fatalf("%s: expected verify_command", s.ID)
+		}
+		if s.ID != ServiceCustom && s.DefaultName == "" {
+			t.Fatalf("%s: expected default_name", s.ID)
+		}
 		if s.ID != ServiceCustom && len(s.Verify.Command) == 0 {
-			t.Fatalf("%s: expected default verify command", s.ID)
+			t.Fatalf("%s: expected systemd verify preset", s.ID)
 		}
 		if s.ID != ServiceCustom && s.Restart.Name == "" {
-			t.Fatalf("%s: expected default restart name", s.ID)
+			t.Fatalf("%s: expected systemd restart name", s.ID)
 		}
 	}
 	for _, want := range []string{ServiceNginx, ServiceHAProxy, ServiceApache2, ServiceHTTPD, ServiceCustom} {
 		if !ids[want] {
 			t.Fatalf("missing service %s", want)
 		}
+	}
+}
+
+func TestPresetDockerNginx(t *testing.T) {
+	info, ok := ServiceByID(ServiceNginx)
+	if !ok {
+		t.Fatal("nginx missing")
+	}
+	v, r := info.Preset(DeployDocker, "web")
+	wantVerify := []string{"docker", "exec", "web", "nginx", "-t"}
+	if strings.Join(v.Command, " ") != strings.Join(wantVerify, " ") {
+		t.Fatalf("verify = %#v", v.Command)
+	}
+	if r.Type != DeployDocker || r.Name != "web" || !r.ReloadOnly {
+		t.Fatalf("restart = %#v", r)
+	}
+	if strings.Join(r.Command, " ") != "nginx -s reload" {
+		t.Fatalf("reload cmd = %#v", r.Command)
+	}
+}
+
+func TestWrapVerifyArgv(t *testing.T) {
+	got := WrapVerifyArgv([]string{"nginx", "-t"}, Restart{Type: DeployDocker, Name: "web"})
+	if strings.Join(got, " ") != "docker exec web nginx -t" {
+		t.Fatalf("got %#v", got)
+	}
+	already := []string{"docker", "exec", "web", "nginx", "-t"}
+	if strings.Join(WrapVerifyArgv(already, Restart{Type: DeployDocker, Name: "web"}), " ") != strings.Join(already, " ") {
+		t.Fatal("should not double-wrap")
 	}
 }
 

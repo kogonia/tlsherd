@@ -359,14 +359,15 @@ func (a *Agent) report(ctx context.Context, res ApplyResult) error {
 }
 
 func (a *Agent) runVerify(ctx context.Context, fqdn string) (string, error) {
-	v := a.runtimeCFG().Verify
+	rt := a.runtimeCFG()
+	v := rt.Verify
 	timeout := v.Timeout.Std()
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
 	vctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	argv := renderArgv(v.Command, fqdn)
+	argv := agentcfg.WrapVerifyArgv(renderArgv(v.Command, fqdn), rt.Restart)
 	stdout, stderr, err := a.runner.Run(vctx, argv[0], argv[1:]...)
 	if err != nil {
 		return truncate(strings.TrimSpace(stdout + "\n" + stderr)), fmt.Errorf("verify command failed: %w", err)

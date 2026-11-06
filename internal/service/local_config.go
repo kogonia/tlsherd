@@ -29,12 +29,15 @@ type ServerLocalConfigView struct {
 	Services          []ServiceCatalogEntry `json:"services"`
 }
 
-// ServiceCatalogEntry is exposed to the UI.
+// ServiceCatalogEntry is exposed to the UI (web recipe + systemd preset).
 type ServiceCatalogEntry struct {
-	ID      string           `json:"id"`
-	Label   string           `json:"label"`
-	Verify  agentcfg.Verify  `json:"verify"`
-	Restart agentcfg.Restart `json:"restart"`
+	ID            string             `json:"id"`
+	Label         string             `json:"label"`
+	DefaultName   string             `json:"default_name"`
+	VerifyCommand []string           `json:"verify_command"`
+	ReloadCommand []string           `json:"reload_command"`
+	Verify        agentcfg.Verify    `json:"verify"`  // systemd preset
+	Restart       agentcfg.Restart   `json:"restart"` // systemd preset
 }
 
 // SetLocalConfigInput is an admin edit of the agent's local config.
@@ -49,7 +52,13 @@ type SetLocalConfigInput struct {
 func catalogEntries() []ServiceCatalogEntry {
 	out := make([]ServiceCatalogEntry, 0, len(agentcfg.Services()))
 	for _, s := range agentcfg.Services() {
-		out = append(out, ServiceCatalogEntry{ID: s.ID, Label: s.Label, Verify: s.Verify, Restart: s.Restart})
+		out = append(out, ServiceCatalogEntry{
+			ID: s.ID, Label: s.Label, DefaultName: s.DefaultName,
+			VerifyCommand: append([]string(nil), s.VerifyCommand...),
+			ReloadCommand: append([]string(nil), s.ReloadCommand...),
+			Verify:        s.Verify,
+			Restart:       s.Restart,
+		})
 	}
 	return out
 }
@@ -242,11 +251,16 @@ func resetLocalField(lc agentcfg.LocalConfig, field string) (agentcfg.LocalConfi
 	if !ok {
 		info, _ = agentcfg.ServiceByID(agentcfg.ServiceCustom)
 	}
+	deploy := lc.Restart.Type
+	if deploy == "" {
+		deploy = agentcfg.DeploySystemd
+	}
+	v, r := info.Preset(deploy, lc.Restart.Name)
 	switch field {
 	case "verify", "verify.command", "verify.timeout":
-		lc.Verify = info.Verify
+		lc.Verify = v
 	case "restart", "restart.type", "restart.name", "restart.reload_only", "restart.command":
-		lc.Restart = info.Restart
+		lc.Restart = r
 	case "install":
 		lc.Install = agentcfg.Default().Install
 	case "cert_path":
