@@ -2298,6 +2298,51 @@
       section('Destinations', destBox));
   };
 
+  // -------------------------------------------------------------- theme
+
+  function currentTheme() {
+    const t = document.documentElement.getAttribute('data-theme');
+    return t === 'dark' ? 'dark' : 'light';
+  }
+
+  function syncThemeToggle() {
+    const btn = document.getElementById('theme-toggle');
+    if (!btn) return;
+    const dark = currentTheme() === 'dark';
+    btn.classList.toggle('is-dark', dark);
+    btn.setAttribute('aria-pressed', dark ? 'true' : 'false');
+    btn.title = dark ? 'Switch to light theme' : 'Switch to dark theme';
+    btn.setAttribute('aria-label', btn.title);
+  }
+
+  async function setTheme(theme, opts) {
+    const next = theme === 'dark' ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', next);
+    syncThemeToggle();
+    if (opts && opts.persist && document.body.dataset.themeUser) {
+      await api('PATCH', '/auth/me', {theme: next});
+    }
+  }
+
+  function initTheme() {
+    syncThemeToggle();
+    const btn = document.getElementById('theme-toggle');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      if (btn.disabled) return;
+      const next = currentTheme() === 'dark' ? 'light' : 'dark';
+      btn.disabled = true;
+      try {
+        await setTheme(next, {persist: true});
+      } catch (e) {
+        toast(errMsg(e), 'error');
+        syncThemeToggle();
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  }
+
   // -------------------------------------------------------------- nav
 
   const NAV_COLLAPSE_KEY = 'tlsherd.nav.collapsed';
@@ -2364,6 +2409,7 @@
   });
 
   async function boot() {
+    initTheme();
     initNav();
     const run = pages[PAGE];
     if (!run) return;

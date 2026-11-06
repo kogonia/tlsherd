@@ -13,6 +13,16 @@ const (
 )
 
 const (
+	ThemeLight = "light"
+	ThemeDark  = "dark"
+)
+
+// ValidTheme reports whether t is a supported UI theme.
+func ValidTheme(t string) bool {
+	return t == ThemeLight || t == ThemeDark
+}
+
+const (
 	ServerActive          = "active"
 	ServerBlockedIdentity = "blocked_identity"
 	ServerOffline         = "offline"
@@ -38,6 +48,7 @@ type User struct {
 	DisplayName        string     `json:"display_name"`
 	PasswordHash       string     `json:"-"`
 	Role               string     `json:"role"`
+	Theme              string     `json:"theme"`
 	IsActive           bool       `json:"is_active"`
 	MustChangePassword bool       `json:"must_change_password"`
 	CreatedAt          time.Time  `json:"created_at"`

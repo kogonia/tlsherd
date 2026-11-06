@@ -8,6 +8,7 @@ CREATE TABLE users (
     display_name            text NOT NULL DEFAULT '',
     password_hash           text NOT NULL,
     role                    text NOT NULL CHECK (role IN ('admin', 'operator')),
+    theme                   text NOT NULL DEFAULT 'light' CHECK (theme IN ('light', 'dark')),
     is_active               boolean NOT NULL DEFAULT true,
     must_change_password    boolean NOT NULL DEFAULT false,
     created_at              timestamptz NOT NULL DEFAULT now(),

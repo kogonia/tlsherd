@@ -89,6 +89,27 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request, u *domain.User) {
 	})
 }
 
+type patchMeRequest struct {
+	Theme *string `json:"theme"`
+}
+
+func (h *Handler) patchMe(w http.ResponseWriter, r *http.Request, u *domain.User) {
+	var req patchMeRequest
+	if !h.decodeJSON(w, r, &req, false) {
+		return
+	}
+	if req.Theme == nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid", "theme is required")
+		return
+	}
+	out, err := h.svc.UpdateOwnPreferences(r.Context(), u, *req.Theme)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 type changePasswordRequest struct {
 	OldPassword string `json:"old_password"`
 	NewPassword string `json:"new_password"`

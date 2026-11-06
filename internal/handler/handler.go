@@ -93,6 +93,7 @@ func (h *Handler) mountAdminAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/login", h.login)
 	mux.Handle("POST /api/v1/auth/logout", h.authed(h.logout))
 	mux.Handle("GET /api/v1/auth/me", h.authed(h.me))
+	mux.Handle("PATCH /api/v1/auth/me", h.authed(h.patchMe))
 	mux.Handle("POST /api/v1/auth/password", h.authed(h.changePassword))
 
 	// Users (admin)

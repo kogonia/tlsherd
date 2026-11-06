@@ -8,11 +8,11 @@ import (
 	"github.com/kogonia/tlsherd/internal/domain"
 )
 
-const userCols = `id, login::text, display_name, password_hash, role, is_active, must_change_password, created_at, updated_at, last_login_at`
+const userCols = `id, login::text, display_name, password_hash, role, theme, is_active, must_change_password, created_at, updated_at, last_login_at`
 
 func scanUser(r rowScanner) (domain.User, error) {
 	var u domain.User
-	err := r.Scan(&u.ID, &u.Login, &u.DisplayName, &u.PasswordHash, &u.Role,
+	err := r.Scan(&u.ID, &u.Login, &u.DisplayName, &u.PasswordHash, &u.Role, &u.Theme,
 		&u.IsActive, &u.MustChangePassword, &u.CreatedAt, &u.UpdatedAt, &u.LastLoginAt)
 	return u, err
 }
@@ -20,11 +20,14 @@ func scanUser(r rowScanner) (domain.User, error) {
 // CreateUser inserts u. A zero ID is generated; timestamps are set by the database.
 func (s *Store) CreateUser(ctx context.Context, u *domain.User) error {
 	u.ID = newID(u.ID)
+	if u.Theme == "" {
+		u.Theme = domain.ThemeLight
+	}
 	err := s.q.QueryRow(ctx, `
-		INSERT INTO users (id, login, display_name, password_hash, role, is_active, must_change_password, last_login_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO users (id, login, display_name, password_hash, role, theme, is_active, must_change_password, last_login_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING created_at, updated_at`,
-		u.ID, u.Login, u.DisplayName, u.PasswordHash, u.Role, u.IsActive, u.MustChangePassword, u.LastLoginAt,
+		u.ID, u.Login, u.DisplayName, u.PasswordHash, u.Role, u.Theme, u.IsActive, u.MustChangePassword, u.LastLoginAt,
 	).Scan(&u.CreatedAt, &u.UpdatedAt)
 	return mapErr("create user", err)
 }
@@ -48,11 +51,12 @@ func (s *Store) ListUsers(ctx context.Context) ([]domain.User, error) {
 func (s *Store) UpdateUser(ctx context.Context, u *domain.User) error {
 	err := s.q.QueryRow(ctx, `
 		UPDATE users
-		SET login = $2, display_name = $3, password_hash = $4, role = $5,
-		    is_active = $6, must_change_password = $7, last_login_at = $8, updated_at = now()
+		SET login = $2, display_name = $3, password_hash = $4, role = $5, theme = $6,
+		    is_active = $7, must_change_password = $8, last_login_at = $9, updated_at = now()
 		WHERE id = $1
 		RETURNING updated_at`,
-		u.ID, u.Login, u.DisplayName, u.PasswordHash, u.Role, u.IsActive, u.MustChangePassword, u.LastLoginAt,
+		u.ID, u.Login, u.DisplayName, u.PasswordHash, u.Role, u.Theme,
+		u.IsActive, u.MustChangePassword, u.LastLoginAt,
 	).Scan(&u.UpdatedAt)
 	return mapErr("update user", err)
 }

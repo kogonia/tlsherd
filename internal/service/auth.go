@@ -217,6 +217,36 @@ func (s *Services) ChangeOwnPassword(ctx context.Context, actor *domain.User, ol
 	return nil
 }
 
+// UpdateOwnPreferences updates the actor's personal UI preferences (theme).
+func (s *Services) UpdateOwnPreferences(ctx context.Context, actor *domain.User, theme string) (*domain.User, error) {
+	theme = normalizeText(theme)
+	if !domain.ValidTheme(theme) {
+		return nil, invalidf("theme must be %q or %q", domain.ThemeLight, domain.ThemeDark)
+	}
+	var out *domain.User
+	err := s.Store.Tx(ctx, func(tx store.Store) error {
+		u, err := tx.GetUser(ctx, actor.ID)
+		if err != nil {
+			return err
+		}
+		if u.Theme == theme {
+			out = u
+			return nil
+		}
+		u.Theme = theme
+		if err := tx.UpdateUser(ctx, u); err != nil {
+			return err
+		}
+		out = u
+		return s.audit(ctx, tx, actor, "user.preferences", "user", u.ID.String(),
+			map[string]any{"theme": theme})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update preferences: %w", err)
+	}
+	return out, nil
+}
+
 // EnsureBootstrapAdmin creates the first administrator when the users table is
 // empty. The generated password is logged once at Warn and the account requires
 // a password change on first use. It is a no-op when any user already exists.

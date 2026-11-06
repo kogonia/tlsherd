@@ -1,22 +1,31 @@
 {{define "base"}}<!doctype html>
-<html lang="en">
+<html lang="en" data-theme="{{if and .User .User.Theme}}{{.User.Theme}}{{else}}light{{end}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
 <title>{{.Title}} · TLS herd</title>
 <link rel="stylesheet" href="/static/app.css">
 <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false}'>
 <script src="/static/htmx.min.js" defer></script>
 <script src="/static/app.js" defer></script>
 </head>
-<body data-page="{{.Page}}" class="nav-collapsed"{{if .User}} data-role="{{.User.Role}}" data-login="{{.User.Login}}"{{end}}>
+<body data-page="{{.Page}}" class="nav-collapsed"{{if .User}} data-role="{{.User.Role}}" data-login="{{.User.Login}}" data-theme-user="1"{{end}}>
 {{if .User}}
 <header class="topbar">
   <button type="button" class="nav-menu link" id="nav-menu" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false">Menu</button>
   <a class="brand" href="/">TLS herd</a>
   <div class="topbar-spacer"></div>
   <div class="userbox">
+    {{$dark := and .User (eq .User.Theme "dark")}}
+    <button type="button" id="theme-toggle" class="theme-toggle{{if $dark}} is-dark{{end}}" aria-label="{{if $dark}}Switch to light theme{{else}}Switch to dark theme{{end}}" title="{{if $dark}}Switch to light theme{{else}}Switch to dark theme{{end}}" aria-pressed="{{if $dark}}true{{else}}false{{end}}">
+      <span class="theme-toggle-track" aria-hidden="true">
+        <span class="theme-toggle-icon theme-sun">☀</span>
+        <span class="theme-toggle-thumb"></span>
+        <span class="theme-toggle-icon theme-moon">☾</span>
+      </span>
+    </button>
     <a href="/account"{{if eq .Page "account"}} class="active"{{end}}>{{.User.Login}} <span class="badge">{{.User.Role}}</span></a>
     <button type="button" id="logout" class="link" hx-post="/api/v1/auth/logout" hx-swap="none">Sign out</button>
   </div>

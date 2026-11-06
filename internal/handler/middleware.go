@@ -182,7 +182,7 @@ func safeMethod(m string) bool {
 func passwordChangeAllowed(r *http.Request) bool {
 	switch r.URL.Path {
 	case "/api/v1/auth/me":
-		return r.Method == http.MethodGet
+		return r.Method == http.MethodGet || r.Method == http.MethodPatch
 	case "/api/v1/auth/password", "/api/v1/auth/logout":
 		return r.Method == http.MethodPost
 	default:
