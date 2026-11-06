@@ -1725,35 +1725,24 @@
 
   // -------------------------------------------------------------- nav
 
-  const NAV_PIN_KEY = 'tlsherd.nav.pinned';
   const NAV_COLLAPSE_KEY = 'tlsherd.nav.collapsed';
 
   function initNav() {
     const sidebar = document.getElementById('sidebar');
     if (!sidebar) return;
 
-    const pinBtn = document.getElementById('nav-pin');
     const collapseBtn = document.getElementById('nav-collapse');
     const menuBtn = document.getElementById('nav-menu');
     const backdrop = document.getElementById('nav-backdrop');
 
-    function pinned() {
-      return localStorage.getItem(NAV_PIN_KEY) === '1';
-    }
     function collapsedPref() {
       const v = localStorage.getItem(NAV_COLLAPSE_KEY);
       if (v === null) return true; // first visit: collapsed
       return v === '1';
     }
     function apply() {
-      const isPinned = pinned();
-      const isCollapsed = isPinned ? false : collapsedPref();
-      document.body.classList.toggle('nav-pinned', isPinned);
+      const isCollapsed = collapsedPref();
       document.body.classList.toggle('nav-collapsed', isCollapsed);
-      if (pinBtn) {
-        pinBtn.setAttribute('aria-pressed', isPinned ? 'true' : 'false');
-        pinBtn.textContent = isPinned ? 'Pinned' : 'Pin';
-      }
       if (collapseBtn) {
         collapseBtn.setAttribute('aria-label', isCollapsed ? 'Expand sidebar' : 'Collapse sidebar');
         collapseBtn.title = isCollapsed ? 'Expand' : 'Collapse';
@@ -1770,26 +1759,7 @@
 
     if (collapseBtn) {
       collapseBtn.addEventListener('click', () => {
-        if (pinned()) {
-          localStorage.removeItem(NAV_PIN_KEY);
-          localStorage.setItem(NAV_COLLAPSE_KEY, '1');
-        } else if (collapsedPref()) {
-          localStorage.setItem(NAV_COLLAPSE_KEY, '0');
-        } else {
-          localStorage.setItem(NAV_COLLAPSE_KEY, '1');
-        }
-        apply();
-      });
-    }
-    if (pinBtn) {
-      pinBtn.addEventListener('click', () => {
-        if (pinned()) {
-          localStorage.removeItem(NAV_PIN_KEY);
-          localStorage.setItem(NAV_COLLAPSE_KEY, '1');
-        } else {
-          localStorage.setItem(NAV_PIN_KEY, '1');
-          localStorage.setItem(NAV_COLLAPSE_KEY, '0');
-        }
+        localStorage.setItem(NAV_COLLAPSE_KEY, collapsedPref() ? '0' : '1');
         apply();
       });
     }
