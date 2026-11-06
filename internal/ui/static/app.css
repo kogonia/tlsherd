@@ -175,10 +175,13 @@ table { width: 100%; border-collapse: collapse; background: var(--card); }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
 th { font-size: 12px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); background: var(--surface-4); }
 td.actions { white-space: nowrap; }
-/* Keep expandable / multiline cell content flush with neighboring top-aligned cells. */
+/* Expandable cells must not add margin/padding that shifts badges vs neighbors. */
 td details { margin: 0; }
 td details > summary { padding: 0; font-weight: inherit; line-height: inherit; }
-td .badge { vertical-align: top; }
+/* Badges/buttons share the first-line box with plain text (avoid top-sticking). */
+td .badge,
+td button,
+td code { vertical-align: text-top; }
 .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 12px; }
 .tablewrap table { border: 0; }
 
@@ -237,11 +240,10 @@ td button { padding: 2px 8px; font-size: 12.5px; }
 .tz-item:hover, .tz-item.active { background: var(--info-bg); }
 table.nested { font-size: 12.5px; margin: 6px 0 0; border: 1px solid var(--line); }
 table.nested th, table.nested td { padding: 3px 6px; vertical-align: top; }
-.notify-details summary {
-  cursor: pointer; list-style: none;
-  display: inline-flex; align-items: center; gap: 4px;
+.notify-details > summary {
+  cursor: pointer; list-style: none; display: inline;
 }
-.notify-details summary::-webkit-details-marker { display: none; }
+.notify-details > summary::-webkit-details-marker { display: none; }
 .checks { max-height: 220px; overflow: auto; border: 1px solid var(--line); border-radius: 4px; padding: 6px 10px; }
 
 .banner { border: 1px solid; border-radius: 6px; padding: 8px 12px; margin: 0 0 12px; }
