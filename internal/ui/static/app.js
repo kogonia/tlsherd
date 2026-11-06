@@ -1525,7 +1525,7 @@
         h('div', {class: 'banner warn'},
           'Agent-priority settings on the host ($TLSHERD_AGENT_DIR/agent.local.cfg, default /var/lib/tlsherd-agent/). Saving queues a push on the next poll; the agent keeps one previous version as .prev.'),
         h('fieldset', null, h('legend', null, 'Service'),
-          h('div', {class: 'row'},
+          h('div', {class: 'row row-top'},
             field('Web service', svcSel, 'Software that serves TLS (fills verify/reload recipes).'),
             field('Start method', deploySel, 'How the agent signals that software after a cert update (systemd, docker, or a custom command).')),
           h('p', {class: 'help'}, 'Changing either refills pre-start validation and restart for that combination (e.g. nginx + docker → docker exec … nginx -t).')),

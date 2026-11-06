@@ -145,6 +145,7 @@ select::-ms-expand { display: none; }
 td input, td select { margin-top: 0; max-width: 220px; }
 textarea { font-family: var(--mono); font-size: 12.5px; max-width: 640px; }
 .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+.row.row-top { align-items: flex-start; }
 .row > label { margin: 0; flex: 0 1 220px; }
 fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 0 0 12px; padding: 6px 12px 10px; }
 legend { font-weight: 600; padding: 0 6px; }
