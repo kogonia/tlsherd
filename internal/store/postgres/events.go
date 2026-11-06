@@ -293,12 +293,25 @@ func (s *Store) ListAudit(ctx context.Context, limit, offset int) ([]domain.Audi
 	offset = max(offset, 0)
 	return queryAll(ctx, s.q, "list audit", func(r rowScanner) (domain.AuditEntry, error) {
 		var a domain.AuditEntry
-		err := r.Scan(&a.ID, &a.At, &a.ActorUserID, &a.Action, &a.EntityType, &a.EntityID, &a.Details)
-		return a, err
+		var login, display *string
+		err := r.Scan(&a.ID, &a.At, &a.ActorUserID, &a.Action, &a.EntityType, &a.EntityID, &a.Details,
+			&login, &display)
+		if err != nil {
+			return a, err
+		}
+		if login != nil {
+			a.ActorLogin = *login
+		}
+		if display != nil {
+			a.ActorDisplayName = *display
+		}
+		return a, nil
 	}, `
-		SELECT id, at, actor_user_id, action, entity_type, entity_id, details
-		FROM audit_log
-		ORDER BY at DESC, id DESC
+		SELECT a.id, a.at, a.actor_user_id, a.action, a.entity_type, a.entity_id, a.details,
+			u.login, u.display_name
+		FROM audit_log a
+		LEFT JOIN users u ON u.id = a.actor_user_id
+		ORDER BY a.at DESC, a.id DESC
 		LIMIT $1 OFFSET $2`, limit, offset)
 }
 

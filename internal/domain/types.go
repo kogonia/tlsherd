@@ -320,13 +320,15 @@ type EventNotification struct {
 }
 
 type AuditEntry struct {
-	ID          int64      `json:"id"`
-	At          time.Time  `json:"at"`
-	ActorUserID *uuid.UUID `json:"actor_user_id"`
-	Action      string     `json:"action"`
-	EntityType  string     `json:"entity_type"`
-	EntityID    string     `json:"entity_id"`
-	Details     []byte     `json:"-"`
+	ID               int64      `json:"id"`
+	At               time.Time  `json:"at"`
+	ActorUserID      *uuid.UUID `json:"actor_user_id"`
+	ActorLogin       string     `json:"actor_login,omitempty"`
+	ActorDisplayName string     `json:"actor_display_name,omitempty"`
+	Action           string     `json:"action"`
+	EntityType       string     `json:"entity_type"`
+	EntityID         string     `json:"entity_id"`
+	Details          []byte     `json:"-"`
 }
 
 type EffectivePerms struct {

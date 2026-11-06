@@ -1397,8 +1397,12 @@
           const list = (await api('GET', '/audit?limit=' + auditState.limit + '&offset=' + auditState.offset)) || [];
           auditPager.update(list.length);
           return table(['When', 'Actor', 'Action', 'Entity', 'Details'],
-            list.map((a) => [fmt(a.at), a.actor_user_id ? code(a.actor_user_id.slice(0, 8)) : muted('system'), code(a.action),
-              a.entity_type + ' ' + a.entity_id, detailsBlock(a.details)]), 'Audit log is empty.');
+            list.map((a) => {
+              const actor = a.actor_display_name || a.actor_login
+                || (a.actor_user_id ? code(a.actor_user_id.slice(0, 8)) : muted('system'));
+              return [fmt(a.at), actor, code(a.action),
+                a.entity_type + ' ' + a.entity_id, detailsBlock(a.details)];
+            }), 'Audit log is empty.');
         });
       }
       await refreshAudit();
