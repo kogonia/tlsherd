@@ -13,6 +13,11 @@ a { color: var(--primary); text-decoration: none; }
 a:hover { text-decoration: underline; }
 h1 { font-size: 22px; margin: 0 0 16px; }
 h2 { font-size: 16px; margin: 0 0 10px; }
+.card-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin: 0 0 10px; flex-wrap: wrap;
+}
+.card-head > h2 { margin: 0; flex: 1 1 auto; min-width: 0; }
 h3 { font-size: 14px; margin: 12px 0 6px; }
 main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 60px; }
 code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
@@ -197,14 +202,14 @@ details.item { background: var(--card); border: 1px solid var(--line); border-ra
 .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 0 0 12px; }
 .toolbar label { margin: 0; }
 .pager {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  margin: 0 0 10px; flex-wrap: nowrap;
+  display: flex; align-items: center; gap: 6px;
+  margin: 0; margin-left: auto; flex: 0 0 auto; flex-wrap: nowrap;
 }
 .pager > label.inline { margin: 0; flex: 0 0 auto; white-space: nowrap; }
 .pager > label.inline select {
   display: inline-block; width: auto; max-width: none; margin: 0 0 0 4px; vertical-align: middle;
 }
-.pager-nav { display: flex; gap: 6px; align-items: center; margin-left: auto; flex: 0 0 auto; }
+.pager > button { flex: 0 0 auto; }
 .endpoint-add-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: flex-end; padding-bottom: 2px; }
 .dns-rows { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
 .dns-match { border-top: 1px solid var(--line); padding-top: 8px; }

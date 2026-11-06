@@ -223,7 +223,8 @@
     return limit >= PAGE_SIZE_ALL ? 'all' : String(limit);
   }
 
-  // pagerBar: left "On page" size select, right Prev/Next. Call update(hasMore) after load.
+  // pagerBar: "On page" + Prev/Next, right-aligned in the panel header. Call update after load.
+  // update(got) for server pages (next off when got < limit); update(got, total) for client slices.
   function pagerBar(state, onChange) {
     const sizeSel = select('on_page', PAGE_SIZE_OPTS, pageSizeSelectValue(state.limit));
     const prev = button('← Prev', () => {
@@ -242,17 +243,55 @@
     });
     const bar = h('div', {class: 'pager'},
       h('label', {class: 'inline'}, 'On page ', sizeSel),
-      h('div', {class: 'pager-nav'}, prev, next));
+      prev, next);
     return {
       bar,
-      update(got) {
+      update(got, total) {
         prev.disabled = state.offset === 0;
-        next.disabled = state.limit >= PAGE_SIZE_ALL || got < state.limit;
+        if (state.limit >= PAGE_SIZE_ALL) {
+          next.disabled = true;
+        } else if (total != null) {
+          next.disabled = state.offset + got >= total;
+        } else {
+          next.disabled = got < state.limit;
+        }
       },
     };
   }
 
-  const section = (title, ...kids) => h('section', {class: 'card'}, h('h2', null, title), kids);
+  // pageItems returns the current page of a full in-memory list and clamps offset.
+  function pageItems(items, state) {
+    const all = items || [];
+    if (state.limit >= PAGE_SIZE_ALL) {
+      state.offset = 0;
+      return all;
+    }
+    if (!all.length) {
+      state.offset = 0;
+      return all;
+    }
+    if (state.offset >= all.length) {
+      state.offset = Math.floor((all.length - 1) / state.limit) * state.limit;
+    }
+    return all.slice(state.offset, state.offset + state.limit);
+  }
+
+  // section builds a card; a kid with class "pager" is placed in the header row (right).
+  function section(title, ...kids) {
+    let headRight = null;
+    const body = [];
+    for (const k of kids.flat(Infinity)) {
+      if (k === null || k === undefined || k === false) continue;
+      if (!headRight && k instanceof Element && k.classList.contains('pager')) {
+        headRight = k;
+        continue;
+      }
+      body.push(k);
+    }
+    return h('section', {class: 'card'},
+      h('div', {class: 'card-head'}, h('h2', null, title), headRight),
+      body);
+  }
 
   function field(label, input, help) {
     return h('label', null, label, input, help ? h('span', {class: 'help'}, help) : null);
@@ -627,11 +666,14 @@
 
   pages.enrollments = async function (root) {
     let status = 'pending';
+    const state = {limit: 25, offset: 0};
     const list = h('div', null);
     const filter = select('status', [['pending', 'Pending'], ['accepted', 'Accepted'], ['rejected', 'Rejected'], ['', 'All']], status);
-    filter.addEventListener('change', () => { status = filter.value; refresh(); });
-    root.replaceChildren(h('div', {class: 'toolbar'}, h('label', {class: 'inline'}, 'Show ', filter),
-      button('Refresh', () => refresh())), list);
+    filter.addEventListener('change', () => { status = filter.value; state.offset = 0; refresh(); });
+    const pager = pagerBar(state, () => refresh());
+    root.replaceChildren(
+      h('div', {class: 'toolbar'}, h('label', {class: 'inline'}, 'Show ', filter), button('Refresh', () => refresh())),
+      section('Enrollments', pager.bar, list));
 
     async function refresh() {
       await loadInto(list, async () => {
@@ -639,7 +681,10 @@
           api('GET', '/enrollments' + (status ? '?status=' + encodeURIComponent(status) : '')),
           api('GET', '/servers'),
         ]);
-        const rows = (enrolls || []).map((e) => enrollRow(e, servers || []));
+        const all = enrolls || [];
+        const page = pageItems(all, state);
+        pager.update(page.length, all.length);
+        const rows = page.map((e) => enrollRow(e, servers || []));
         return table(['IP', 'Agent', 'Reason', 'Keys', 'Last seen', 'Status', 'Decision'], rows,
           status === 'pending' ? 'No agents are waiting for approval.' : 'No enrollments.');
       });
@@ -773,21 +818,11 @@
   // ---- domains
 
   pages.domains = async function (root) {
-    const [domains, groups] = await Promise.all([api('GET', '/domains'), api('GET', '/groups')]);
-    const gname = new Map((groups || []).map((g) => [g.id, g.name]));
-    const rows = (domains || []).map((d) => {
-      const c = d.current_certificate;
-      return [
-        link('/domains/' + d.id, d.fqdn),
-        c ? 'v' + d.current_version : muted('no certificate'),
-        c ? expiryBadge(c.not_after) : '',
-        (d.group_ids || []).map((id) => gname.get(id) || id.slice(0, 8)).join(', ') || badge('no group', 'warn'),
-        d.notes || '',
-      ];
-    });
-    root.replaceChildren(section('Domains', table(['Domain', 'Version', 'Expires', 'Groups', 'Notes'], rows, 'No domains yet.')));
-
-    const picker = groupPicker(groups || [], []);
+    const state = {limit: 25, offset: 0};
+    const list = h('div', null);
+    const pager = pagerBar(state, () => refresh());
+    const groups = (await api('GET', '/groups')) || [];
+    const picker = groupPicker(groups, []);
     const form = h('form', null,
       h('div', {class: 'row'}, field('FQDN', input('fqdn', '', {required: true, placeholder: 'www.example.com'})), field('Notes', input('notes', ''))),
       h('h3', null, 'Groups (optional)'),
@@ -802,7 +837,28 @@
         created = await api('POST', '/domains', {fqdn: form.fqdn.value, notes: form.notes.value, group_ids: ids});
       }, 'Domain created')) location.href = '/domains/' + created.id;
     });
-    root.append(section('New domain', form));
+    root.replaceChildren(section('Domains', pager.bar, list), section('New domain', form));
+
+    async function refresh() {
+      await loadInto(list, async () => {
+        const domains = (await api('GET', '/domains')) || [];
+        const gname = new Map(groups.map((g) => [g.id, g.name]));
+        const page = pageItems(domains, state);
+        pager.update(page.length, domains.length);
+        const rows = page.map((d) => {
+          const c = d.current_certificate;
+          return [
+            link('/domains/' + d.id, d.fqdn),
+            c ? 'v' + d.current_version : muted('no certificate'),
+            c ? expiryBadge(c.not_after) : '',
+            (d.group_ids || []).map((id) => gname.get(id) || id.slice(0, 8)).join(', ') || badge('no group', 'warn'),
+            d.notes || '',
+          ];
+        });
+        return table(['Domain', 'Version', 'Expires', 'Groups', 'Notes'], rows, 'No domains yet.');
+      });
+    }
+    await refresh();
   };
 
   // ---- domain detail
@@ -1031,63 +1087,70 @@
   }
 
   pages.servers = async function (root) {
-    const [listRaw, eps, domains] = await Promise.all([
-      api('GET', '/servers'), api('GET', '/monitor/endpoints'), api('GET', '/domains'),
-    ]);
-    const list = listRaw || [];
-    const dmap = new Map((domains || []).map((d) => [d.id, d]));
-    const byServer = new Map();
-    (eps || []).forEach((ep) => {
-      if (!byServer.has(ep.server_id)) byServer.set(ep.server_id, []);
-      byServer.get(ep.server_id).push(ep);
-    });
-    list.sort((a, b) => {
-      const score = (s) => (s.open_critical || 0) * 100 + (s.open_warning || 0) * 10 + (s.endpoints_unhealthy || 0) + (s.agent_status === 'offline' || s.agent_status === 'blocked_identity' ? 50 : 0);
-      return score(b) - score(a) || serverLabel(a).localeCompare(serverLabel(b));
-    });
-    const problemCount = list.filter((s) => (s.open_events || 0) > 0 || s.endpoints_unhealthy || s.agent_status === 'offline' || s.agent_status === 'blocked_identity').length;
+    const state = {limit: 25, offset: 0};
+    const list = h('div', null);
+    const note = h('p', {class: 'muted'}, '');
+    const pager = pagerBar(state, () => refresh());
+    root.replaceChildren(section('Servers', pager.bar, note, list));
 
-    if (!list.length) {
-      root.replaceChildren(section('Servers',
-        h('p', {class: 'muted'}, 'No servers yet. Agents appear on the Enrollments page after their first contact.')));
-      return;
+    async function refresh() {
+      const [listRaw, eps, domains] = await Promise.all([
+        api('GET', '/servers'), api('GET', '/monitor/endpoints'), api('GET', '/domains'),
+      ]);
+      const servers = listRaw || [];
+      const dmap = new Map((domains || []).map((d) => [d.id, d]));
+      const byServer = new Map();
+      (eps || []).forEach((ep) => {
+        if (!byServer.has(ep.server_id)) byServer.set(ep.server_id, []);
+        byServer.get(ep.server_id).push(ep);
+      });
+      servers.sort((a, b) => {
+        const score = (s) => (s.open_critical || 0) * 100 + (s.open_warning || 0) * 10 + (s.endpoints_unhealthy || 0) + (s.agent_status === 'offline' || s.agent_status === 'blocked_identity' ? 50 : 0);
+        return score(b) - score(a) || serverLabel(a).localeCompare(serverLabel(b));
+      });
+      const problemCount = servers.filter((s) => (s.open_events || 0) > 0 || s.endpoints_unhealthy || s.agent_status === 'offline' || s.agent_status === 'blocked_identity').length;
+      note.textContent = !servers.length
+        ? 'No servers yet. Agents appear on the Enrollments page after their first contact.'
+        : (problemCount ? problemCount + ' server(s) with problems (sorted first).' : 'No open agent/monitor problems.');
+
+      const page = pageItems(servers, state);
+      pager.update(page.length, servers.length);
+      if (!servers.length) {
+        list.replaceChildren();
+        return;
+      }
+      list.replaceChildren(h('div', {class: 'tablewrap'}, h('table', null,
+        h('thead', null, h('tr', null,
+          h('th', null, ''), h('th', null, 'Server'), h('th', null, 'Agent'), h('th', null, 'Problems'),
+          h('th', null, 'Last IP'), h('th', null, 'Last seen'), h('th', null, 'Domains'), h('th', null, 'Config'),
+          h('th', null, 'Endpoints'))),
+        h('tbody', null, page.flatMap((s) => {
+          const related = byServer.get(s.id) || [];
+          const toggle = h('button', {type: 'button', class: 'link expand-toggle', 'aria-expanded': 'false'}, related.length ? '▸' : '·');
+          const main = h('tr', {class: 'server-row'},
+            h('td', null, related.length ? toggle : muted('·')),
+            h('td', null, link('/servers/' + s.id, serverLabel(s))),
+            h('td', null, statusBadge(s.agent_status)),
+            h('td', null, serverProblems(s)),
+            h('td', null, s.last_ip || ''),
+            h('td', null, fmt(s.last_seen_at)),
+            h('td', null, String((s.domain_ids || []).length)),
+            h('td', null, s.uses_custom_config ? badge('custom', 'info') : muted('defaults')),
+            h('td', null, related.length ? badge(String(related.length), 'info') : muted('0')));
+          const detail = h('tr', {class: 'server-endpoints', hidden: true},
+            h('td', {colspan: 9}, endpointsNestedTable(related, dmap)));
+          if (related.length) {
+            toggle.addEventListener('click', () => {
+              const open = detail.hidden;
+              detail.hidden = !open;
+              toggle.textContent = open ? '▾' : '▸';
+              toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+            });
+          }
+          return [main, detail];
+        })))));
     }
-
-    const wrap = h('div', {class: 'tablewrap'}, h('table', null,
-      h('thead', null, h('tr', null,
-        h('th', null, ''), h('th', null, 'Server'), h('th', null, 'Agent'), h('th', null, 'Problems'),
-        h('th', null, 'Last IP'), h('th', null, 'Last seen'), h('th', null, 'Domains'), h('th', null, 'Config'),
-        h('th', null, 'Endpoints'))),
-      h('tbody', null, list.flatMap((s) => {
-        const related = byServer.get(s.id) || [];
-        const toggle = h('button', {type: 'button', class: 'link expand-toggle', 'aria-expanded': 'false'}, related.length ? '▸' : '·');
-        const main = h('tr', {class: 'server-row'},
-          h('td', null, related.length ? toggle : muted('·')),
-          h('td', null, link('/servers/' + s.id, serverLabel(s))),
-          h('td', null, statusBadge(s.agent_status)),
-          h('td', null, serverProblems(s)),
-          h('td', null, s.last_ip || ''),
-          h('td', null, fmt(s.last_seen_at)),
-          h('td', null, String((s.domain_ids || []).length)),
-          h('td', null, s.uses_custom_config ? badge('custom', 'info') : muted('defaults')),
-          h('td', null, related.length ? badge(String(related.length), 'info') : muted('0')));
-        const detail = h('tr', {class: 'server-endpoints', hidden: true},
-          h('td', {colspan: 9}, endpointsNestedTable(related, dmap)));
-        if (related.length) {
-          toggle.addEventListener('click', () => {
-            const open = detail.hidden;
-            detail.hidden = !open;
-            toggle.textContent = open ? '▾' : '▸';
-            toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-          });
-        }
-        return [main, detail];
-      }))));
-
-    root.replaceChildren(
-      section('Servers',
-        h('p', {class: 'muted'}, problemCount ? problemCount + ' server(s) with problems (sorted first).' : 'No open agent/monitor problems.'),
-        wrap));
+    await refresh();
   };
 
   // ---- server detail
@@ -1413,7 +1476,9 @@
   // ---- users
 
   pages.users = async function (root) {
+    const state = {limit: 25, offset: 0};
     const list = h('div', null);
+    const pager = pagerBar(state, () => refresh());
     const form = h('form', null,
       h('div', {class: 'row'},
         field('Login', input('login', '', {required: true, autocomplete: 'off'})),
@@ -1426,13 +1491,15 @@
       const body = {login: form.login.value.trim(), display_name: form.display_name.value, password: form.password.value, role: form.role.value};
       if (await act(form.querySelector('button'), () => api('POST', '/users', body), 'User created')) { form.reset(); refresh(); }
     });
-    root.replaceChildren(section('Users', list), section('New user', form));
+    root.replaceChildren(section('New user', form), section('Users', pager.bar, list));
 
     async function refresh() {
       await loadInto(list, async () => {
         const users = (await api('GET', '/users')) || [];
+        const page = pageItems(users, state);
+        pager.update(page.length, users.length);
         const meLogin = (document.body.dataset.login || '').toLowerCase();
-        const rows = users.map((u) => {
+        const rows = page.map((u) => {
           const role = select('role', ['operator', 'admin'], u.role);
           role.addEventListener('change', async () => {
             if (!(await act(role, () => api('PATCH', '/users/' + u.id, {role: role.value}), 'Role updated'))) role.value = u.role;
@@ -1474,6 +1541,7 @@
   // ---- monitor
 
   pages.monitor = async function (root) {
+    const state = {limit: 25, offset: 0};
     const summary = h('div', null);
     const filterBar = h('div', {class: 'toolbar'});
     const list = h('div', null);
@@ -1482,7 +1550,8 @@
     resultsSection.hidden = true;
     const formSlot = h('div', null);
     const dnsSlot = h('div', {class: 'dns-rows'});
-    root.replaceChildren(summary, filterBar, section('Endpoints', list), resultsSection,
+    const pager = pagerBar(state, () => refresh());
+    root.replaceChildren(summary, filterBar, section('Endpoints', pager.bar, list), resultsSection,
       section('New endpoint', formSlot, dnsSlot));
 
     const [srv, domains] = await Promise.all([serversById(), api('GET', '/domains')]);
@@ -1496,7 +1565,7 @@
       h('label', {class: 'inline'}, 'Server ', filterServer),
       h('label', {class: 'inline'}, 'Domain ', filterDomain),
       button('Refresh', () => refresh()));
-    [filterServer, filterDomain].forEach((x) => x.addEventListener('change', () => refresh()));
+    [filterServer, filterDomain].forEach((x) => x.addEventListener('change', () => { state.offset = 0; refresh(); }));
 
     function makeEndpointRow(prefill) {
       const sSel = select('server_id', [['', '— select —']].concat(serverOpts), (prefill && prefill.server_id) || '');
@@ -1649,7 +1718,9 @@
           stat(counts.not_checked, 'Not checked', counts.not_checked ? 'warn' : '', null))));
 
       await loadInto(list, async () => {
-        const rows = filtered.map((ep) => {
+        const page = pageItems(filtered, state);
+        pager.update(page.length, filtered.length);
+        const rows = page.map((ep) => {
           const s = srv.map.get(ep.server_id);
           const d = ep.domain_id ? dmap.get(ep.domain_id) : null;
           const l = ep.latest;
