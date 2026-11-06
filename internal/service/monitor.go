@@ -184,6 +184,9 @@ func (s *Services) CreateEndpoint(ctx context.Context, actor *domain.User, in En
 			}
 		}
 		if err := tx.CreateEndpoint(ctx, ep); err != nil {
+			if errors.Is(err, domain.ErrConflict) {
+				return conflictf("endpoint already exists for this server, host, domain, and port")
+			}
 			return err
 		}
 		return s.audit(ctx, tx, actor, "endpoint.create", "endpoint", ep.ID.String(),
@@ -234,6 +237,9 @@ func (s *Services) UpdateEndpoint(ctx context.Context, actor *domain.User, id uu
 			ep.Enabled = *p.Enabled
 		}
 		if err := tx.UpdateEndpoint(ctx, ep); err != nil {
+			if errors.Is(err, domain.ErrConflict) {
+				return conflictf("endpoint already exists for this server, host, domain, and port")
+			}
 			return err
 		}
 		out = ep

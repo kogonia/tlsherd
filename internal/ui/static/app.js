@@ -127,6 +127,25 @@
     return host + '.' + domainFQDN;
   }
 
+  // matchDomainFromHost finds the longest domain FQDN suffix in host.
+  // Returns {domain, hostPart} where hostPart is the label(s) before the domain
+  // (or the apex FQDN when host equals the domain).
+  function matchDomainFromHost(rawHost, domains) {
+    const host = String(rawHost || '').trim().replace(/\.$/, '').toLowerCase();
+    if (!host) return null;
+    const sorted = (domains || []).slice().sort((a, b) => String(b.fqdn || '').length - String(a.fqdn || '').length);
+    for (const d of sorted) {
+      const fqdn = String(d.fqdn || '').trim().replace(/\.$/, '').toLowerCase();
+      if (!fqdn) continue;
+      if (host === fqdn) return {domain: d, hostPart: fqdn};
+      if (host.endsWith('.' + fqdn)) {
+        const prefix = host.slice(0, -(fqdn.length + 1));
+        if (prefix) return {domain: d, hostPart: prefix};
+      }
+    }
+    return null;
+  }
+
   function button(label, onclick, cls) {
     const b = h('button', {type: 'button', class: cls || ''}, label);
     b.addEventListener('click', () => onclick(b));
@@ -1558,6 +1577,7 @@
     const dmap = new Map((domains || []).map((d) => [d.id, d]));
     const domainOpts = (domains || []).map((d) => [d.id, d.fqdn]);
     const serverOpts = srv.list.map((s) => [s.id, serverLabel(s)]);
+    let endpointsCache = [];
 
     const filterServer = select('filter_server', [['', 'all servers']].concat(serverOpts), '');
     const filterDomain = select('filter_domain', [['', 'all domains']].concat(domainOpts), '');
@@ -1578,6 +1598,20 @@
         field('Server', sSel), field('Host', host), field('Domain', dSel), field('Port', port),
         h('div', {class: 'btns endpoint-add-actions'}, addBtn, dnsBtn));
 
+      // ensureDomainSelected auto-fills domain from host suffix when unset.
+      function ensureDomainSelected() {
+        if (dSel.value) return true;
+        const hit = matchDomainFromHost(host.value, domains || []);
+        if (!hit) {
+          toast('Select a domain', 'error');
+          return false;
+        }
+        dSel.value = hit.domain.id;
+        host.value = hit.hostPart;
+        toast('Domain detected: ' + hit.domain.fqdn, 'ok');
+        return true;
+      }
+
       function resolvedHost() {
         const d = dmap.get(dSel.value);
         return normalizeEndpointHost(host.value, d ? d.fqdn : '');
@@ -1585,12 +1619,22 @@
 
       function buildBody() {
         if (!sSel.value) { toast('Select a server', 'error'); return null; }
-        if (!dSel.value) { toast('Select a domain', 'error'); return null; }
+        if (!ensureDomainSelected()) return null;
         const fqdn = resolvedHost();
         if (!fqdn) { toast('Enter a host', 'error'); return null; }
+        const p = Number(port.value) || 443;
+        const dup = endpointsCache.some((ep) =>
+          ep.server_id === sSel.value &&
+          ep.domain_id === dSel.value &&
+          String(ep.host || '').toLowerCase() === fqdn &&
+          Number(ep.port) === p);
+        if (dup) {
+          toast('Endpoint already exists for this server, host, domain, and port', 'error');
+          return null;
+        }
         return {
           server_id: sSel.value, domain_id: dSel.value, host: fqdn,
-          port: Number(port.value) || 443, enabled: true,
+          port: p, enabled: true,
         };
       }
 
@@ -1608,7 +1652,7 @@
         if (await addOne(false)) refresh();
       });
       dnsBtn.addEventListener('click', async () => {
-        if (!dSel.value) { toast('Select a domain', 'error'); return; }
+        if (!ensureDomainSelected()) return;
         const fqdn = resolvedHost();
         if (!fqdn) { toast('Enter a host', 'error'); return; }
         let res;
@@ -1698,6 +1742,7 @@
 
     async function refresh() {
       const eps = (await api('GET', '/monitor/endpoints')) || [];
+      endpointsCache = eps;
       const fs = filterServer.value;
       const fd = filterDomain.value;
       const filtered = eps.filter((ep) => (!fs || ep.server_id === fs) && (!fd || ep.domain_id === fd));

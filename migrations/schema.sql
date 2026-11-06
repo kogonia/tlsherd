@@ -186,7 +186,8 @@ CREATE TABLE server_endpoints (
     host            text NOT NULL,
     port            int NOT NULL DEFAULT 443,
     enabled         boolean NOT NULL DEFAULT true,
-    created_at      timestamptz NOT NULL DEFAULT now()
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (server_id, domain_id, host, port)
 );
 
 CREATE TABLE monitor_results (
