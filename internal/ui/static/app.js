@@ -210,6 +210,48 @@
       h('tbody', null, rows.map((r) => h('tr', null, r.map((c) => h('td', null, c)))))));
   }
 
+  const PAGE_SIZE_ALL = 1000;
+  const PAGE_SIZE_OPTS = [['25', '25'], ['50', '50'], ['100', '100'], ['all', 'all']];
+
+  function parsePageSize(v, def) {
+    if (v === 'all' || Number(v) >= PAGE_SIZE_ALL) return PAGE_SIZE_ALL;
+    const n = Number(v);
+    return n > 0 ? n : (def || 25);
+  }
+
+  function pageSizeSelectValue(limit) {
+    return limit >= PAGE_SIZE_ALL ? 'all' : String(limit);
+  }
+
+  // pagerBar: left "On page" size select, right Prev/Next. Call update(hasMore) after load.
+  function pagerBar(state, onChange) {
+    const sizeSel = select('on_page', PAGE_SIZE_OPTS, pageSizeSelectValue(state.limit));
+    const prev = button('← Prev', () => {
+      const step = state.limit >= PAGE_SIZE_ALL ? PAGE_SIZE_ALL : state.limit;
+      state.offset = Math.max(0, state.offset - step);
+      onChange();
+    });
+    const next = button('Next →', () => {
+      state.offset += state.limit >= PAGE_SIZE_ALL ? PAGE_SIZE_ALL : state.limit;
+      onChange();
+    });
+    sizeSel.addEventListener('change', () => {
+      state.limit = parsePageSize(sizeSel.value, 25);
+      state.offset = 0;
+      onChange();
+    });
+    const bar = h('div', {class: 'pager'},
+      h('label', {class: 'inline'}, 'On page ', sizeSel),
+      h('div', {class: 'pager-nav'}, prev, next));
+    return {
+      bar,
+      update(got) {
+        prev.disabled = state.offset === 0;
+        next.disabled = state.limit >= PAGE_SIZE_ALL || got < state.limit;
+      },
+    };
+  }
+
   const section = (title, ...kids) => h('section', {class: 'card'}, h('h2', null, title), kids);
 
   function field(label, input, help) {
@@ -1296,12 +1338,12 @@
     const state = {
       type: params.get('type') || '',
       unresolved: params.get('unresolved') !== '0' && params.get('unresolved') !== 'false',
-      limit: Number(params.get('limit') || 100) || 100,
+      limit: parsePageSize(params.get('limit') || '25', 25),
       offset: Number(params.get('offset') || 0) || 0,
       server_id: params.get('server_id') || '',
       domain_id: params.get('domain_id') || '',
     };
-    const out = h('div', null);
+    const tableSlot = h('div', null);
     const [srv, domains] = await Promise.all([serversById(), api('GET', '/domains')]);
     const dmap = new Map((domains || []).map((d) => [d.id, d]));
     const types = ['', 'cert_expired', 'cert_expiring_soon', 'cert_key_mismatch', 'cert_chain_invalid', 'cert_domain_mismatch_confirmed',
@@ -1313,26 +1355,24 @@
     const serverSel = select('server_id', [['', 'all servers']].concat(srv.list.map((s) => [s.id, serverLabel(s)])), state.server_id);
     const domainSel = select('domain_id', [['', 'all domains']].concat((domains || []).map((d) => [d.id, d.fqdn])), state.domain_id);
     const unres = h('input', {type: 'checkbox', checked: state.unresolved});
-    const limit = select('limit', ['50', '100', '500'], String(state.limit));
-    const prev = button('← Newer', () => { state.offset = Math.max(0, state.offset - state.limit); refresh(); });
-    const next = button('Older →', () => { state.offset += state.limit; refresh(); });
-    const apply = () => {
+    const applyFilters = () => {
       state.type = typeSel.value;
       state.unresolved = unres.checked;
-      state.limit = Number(limit.value);
       state.server_id = serverSel.value;
       state.domain_id = domainSel.value;
       state.offset = 0;
       refresh();
     };
-    [typeSel, serverSel, domainSel, unres, limit].forEach((x) => x.addEventListener('change', apply));
-    const bar = h('div', {class: 'toolbar'},
+    [typeSel, serverSel, domainSel, unres].forEach((x) => x.addEventListener('change', applyFilters));
+    const filterBar = h('div', {class: 'toolbar'},
       h('label', {class: 'inline'}, 'Type ', typeSel),
       h('label', {class: 'inline'}, 'Server ', serverSel),
       h('label', {class: 'inline'}, 'Domain ', domainSel),
       h('label', {class: 'check'}, unres, 'open only'),
-      h('label', {class: 'inline'}, 'Per page ', limit), button('Refresh', () => refresh()), prev, next);
-    root.replaceChildren(bar, section('Events', out));
+      button('Refresh', () => refresh()));
+
+    const pager = pagerBar(state, () => refresh());
+    root.replaceChildren(filterBar, section('Events', pager.bar, tableSlot));
 
     async function refresh() {
       const q = new URLSearchParams({limit: state.limit, offset: state.offset});
@@ -1340,23 +1380,28 @@
       if (state.unresolved) q.set('unresolved', '1');
       if (state.server_id) q.set('server_id', state.server_id);
       if (state.domain_id) q.set('domain_id', state.domain_id);
-      prev.disabled = state.offset === 0;
-      await loadInto(out, async () => {
+      await loadInto(tableSlot, async () => {
         const list = (await api('GET', '/events?' + q)) || [];
-        next.disabled = list.length < state.limit;
+        pager.update(list.length);
         return eventsTable(list, refresh, {servers: srv.map, domains: dmap});
       });
     }
 
     if (IS_ADMIN) {
-      const audit = h('div', null);
-      root.append(section('Audit log (admin)', audit));
-      loadInto(audit, async () => {
-        const list = (await api('GET', '/audit?limit=100')) || [];
-        return table(['When', 'Actor', 'Action', 'Entity', 'Details'],
-          list.map((a) => [fmt(a.at), a.actor_user_id ? code(a.actor_user_id.slice(0, 8)) : muted('system'), code(a.action),
-            a.entity_type + ' ' + a.entity_id, detailsBlock(a.details)]), 'Audit log is empty.');
-      });
+      const auditState = {limit: 25, offset: 0};
+      const auditTable = h('div', null);
+      const auditPager = pagerBar(auditState, () => refreshAudit());
+      root.append(section('Audit log (admin)', auditPager.bar, auditTable));
+      async function refreshAudit() {
+        await loadInto(auditTable, async () => {
+          const list = (await api('GET', '/audit?limit=' + auditState.limit + '&offset=' + auditState.offset)) || [];
+          auditPager.update(list.length);
+          return table(['When', 'Actor', 'Action', 'Entity', 'Details'],
+            list.map((a) => [fmt(a.at), a.actor_user_id ? code(a.actor_user_id.slice(0, 8)) : muted('system'), code(a.action),
+              a.entity_type + ' ' + a.entity_id, detailsBlock(a.details)]), 'Audit log is empty.');
+        });
+      }
+      await refreshAudit();
     }
     await refresh();
   };

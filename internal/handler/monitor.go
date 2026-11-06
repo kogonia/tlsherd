@@ -157,7 +157,9 @@ func (h *Handler) dismissEvent(w http.ResponseWriter, r *http.Request, u *domain
 }
 
 func (h *Handler) listAudit(w http.ResponseWriter, r *http.Request, u *domain.User) {
-	out, err := h.svc.ListAudit(r.Context(), u, intQuery(r, "limit", 100, 1000))
+	out, err := h.svc.ListAudit(r.Context(), u,
+		intQuery(r, "limit", 25, 1000),
+		intQuery(r, "offset", 0, 1_000_000))
 	if err != nil {
 		h.fail(w, r, err)
 		return

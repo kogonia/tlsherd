@@ -161,11 +161,11 @@ func (s *Services) ListEventsWithNotify(ctx context.Context, actor *domain.User,
 }
 
 // ListAudit returns the newest audit entries. Admin only.
-func (s *Services) ListAudit(ctx context.Context, actor *domain.User, limit int) ([]domain.AuditEntry, error) {
+func (s *Services) ListAudit(ctx context.Context, actor *domain.User, limit, offset int) ([]domain.AuditEntry, error) {
 	if err := requireAdmin(actor); err != nil {
 		return nil, err
 	}
-	out, err := s.Store.ListAudit(ctx, limit)
+	out, err := s.Store.ListAudit(ctx, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("list audit: %w", err)
 	}

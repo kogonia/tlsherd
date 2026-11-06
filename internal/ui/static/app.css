@@ -124,6 +124,7 @@ label.inline, .check { display: inline-flex; align-items: center; gap: 6px; font
 input[type=text], input[type=number], input[type=password], input:not([type]), select, textarea {
   display: block; width: 100%; max-width: 480px; padding: 6px 8px; border: 1px solid #b9c0cd; border-radius: 4px; font: inherit; background: #fff; margin-top: 3px;
 }
+select { padding-right: 28px; }
 td input, td select { margin-top: 0; max-width: 220px; }
 textarea { font-family: var(--mono); font-size: 12.5px; max-width: 640px; }
 .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
@@ -183,6 +184,15 @@ details > summary { cursor: pointer; padding: 4px 0; font-weight: 500; }
 details.item { background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 4px 12px; }
 .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 0 0 12px; }
 .toolbar label { margin: 0; }
+.pager {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin: 0 0 10px; flex-wrap: nowrap;
+}
+.pager > label.inline { margin: 0; flex: 0 0 auto; white-space: nowrap; }
+.pager > label.inline select {
+  display: inline-block; width: auto; max-width: none; margin: 0 0 0 4px; vertical-align: middle;
+}
+.pager-nav { display: flex; gap: 6px; align-items: center; margin-left: auto; flex: 0 0 auto; }
 .endpoint-add-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: flex-end; padding-bottom: 2px; }
 .dns-rows { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
 .dns-match { border-top: 1px solid var(--line); padding-top: 8px; }

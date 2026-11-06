@@ -285,11 +285,12 @@ func (s *Store) InsertAudit(ctx context.Context, a *domain.AuditEntry) error {
 }
 
 // ListAudit returns the newest audit entries first; limit <= 0 means 100, capped at 1000.
-func (s *Store) ListAudit(ctx context.Context, limit int) ([]domain.AuditEntry, error) {
+func (s *Store) ListAudit(ctx context.Context, limit, offset int) ([]domain.AuditEntry, error) {
 	if limit <= 0 {
 		limit = defaultEventsLimit
 	}
 	limit = min(limit, maxEventsLimit)
+	offset = max(offset, 0)
 	return queryAll(ctx, s.q, "list audit", func(r rowScanner) (domain.AuditEntry, error) {
 		var a domain.AuditEntry
 		err := r.Scan(&a.ID, &a.At, &a.ActorUserID, &a.Action, &a.EntityType, &a.EntityID, &a.Details)
@@ -298,7 +299,7 @@ func (s *Store) ListAudit(ctx context.Context, limit int) ([]domain.AuditEntry, 
 		SELECT id, at, actor_user_id, action, entity_type, entity_id, details
 		FROM audit_log
 		ORDER BY at DESC, id DESC
-		LIMIT $1`, limit)
+		LIMIT $1 OFFSET $2`, limit, offset)
 }
 
 // Settings

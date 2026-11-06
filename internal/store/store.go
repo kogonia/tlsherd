@@ -138,7 +138,7 @@ type Store interface {
 	ResolveEventByID(ctx context.Context, id int64, at time.Time, details []byte) (*domain.Event, error)
 	ListEvents(ctx context.Context, filter EventFilter) ([]domain.Event, error)
 	InsertAudit(ctx context.Context, a *domain.AuditEntry) error
-	ListAudit(ctx context.Context, limit int) ([]domain.AuditEntry, error)
+	ListAudit(ctx context.Context, limit, offset int) ([]domain.AuditEntry, error)
 	GetSetting(ctx context.Context, key string) ([]byte, error)
 	SetSetting(ctx context.Context, key string, value []byte) error
 	// DeleteSetting removes key; a missing key is not an error.
