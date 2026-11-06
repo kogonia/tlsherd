@@ -173,9 +173,13 @@ type Store interface {
 type EventFilter struct {
 	UnresolvedOnly bool
 	Type           string
-	DomainIDs      []uuid.UUID
-	ServerIDs      []uuid.UUID
-	GroupIDs       []uuid.UUID
+	// DomainIDs, ServerIDs, GroupIDs form the OR visibility scope for operators.
+	DomainIDs []uuid.UUID
+	ServerIDs []uuid.UUID
+	GroupIDs  []uuid.UUID
+	// FilterDomainID / FilterServerID are optional user filters ANDed with scope.
+	FilterDomainID *uuid.UUID
+	FilterServerID *uuid.UUID
 	Limit          int
 	Offset         int
 }

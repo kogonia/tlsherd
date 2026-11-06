@@ -105,10 +105,27 @@
   }
 
   const link = (href, text) => h('a', {href}, text);
+  const extLink = (href, text) => h('a', {href, target: '_blank', rel: 'noopener noreferrer'}, text);
   const code = (t) => h('code', null, t);
   const muted = (t) => h('span', {class: 'muted'}, t);
   const badge = (t, kind) => h('span', {class: 'badge' + (kind ? ' ' + kind : '')}, t);
   const btns = (...b) => h('div', {class: 'btns'}, b);
+
+  // httpsEndpointLink builds an external https://host:port/ link for an endpoint.
+  function httpsEndpointLink(host, port) {
+    const label = host + ':' + port;
+    return extLink('https://' + host + ':' + port + '/', label);
+  }
+
+  // normalizeEndpointHost appends domainFQDN when host lacks that suffix.
+  function normalizeEndpointHost(host, domainFQDN) {
+    host = String(host || '').trim().replace(/\.$/, '').toLowerCase();
+    domainFQDN = String(domainFQDN || '').trim().replace(/\.$/, '').toLowerCase();
+    if (!host) return '';
+    if (!domainFQDN) return host;
+    if (host === domainFQDN || host.endsWith('.' + domainFQDN)) return host;
+    return host + '.' + domainFQDN;
+  }
 
   function button(label, onclick, cls) {
     const b = h('button', {type: 'button', class: cls || ''}, label);
@@ -536,19 +553,27 @@
           h('td', null, notifyStatusBadge(n.status), n.last_error ? h('div', {class: 'small muted'}, n.last_error) : null))))));
   }
 
-  function eventsTable(list, onChange) {
-    return table(['When', 'Severity', 'Type', 'Message', 'Notify', 'Status', ''],
-      list.map((e) => [
-        fmt(e.at), severityBadge(e.severity), code(e.type),
-        h('div', null, e.message, detailsBlock(e.details)),
-        notifyExpand(e),
-        e.resolved_at ? badge('resolved ' + fmt(e.resolved_at), 'ok') : badge('open', 'warn'),
-        e.resolved_at ? '' : button('Dismiss', async (b) => {
-          if (await act(b, () => api('POST', '/events/' + e.id + '/dismiss'), 'Event dismissed')) {
-            if (onChange) onChange();
-          }
-        }),
-      ]), 'No events.');
+  function eventsTable(list, onChange, maps) {
+    const smap = (maps && maps.servers) || new Map();
+    const dmap = (maps && maps.domains) || new Map();
+    return table(['When', 'Severity', 'Type', 'Server', 'Domain', 'Message', 'Notify', 'Status', ''],
+      list.map((e) => {
+        const s = e.server_id ? smap.get(e.server_id) : null;
+        const d = e.domain_id ? dmap.get(e.domain_id) : null;
+        return [
+          fmt(e.at), severityBadge(e.severity), code(e.type),
+          s ? link('/servers/' + s.id, serverLabel(s)) : (e.server_id ? code(e.server_id.slice(0, 8)) : muted('—')),
+          d ? link('/domains/' + d.id, d.fqdn) : (e.domain_id ? code(e.domain_id.slice(0, 8)) : muted('—')),
+          h('div', null, e.message, detailsBlock(e.details)),
+          notifyExpand(e),
+          e.resolved_at ? badge('resolved ' + fmt(e.resolved_at), 'ok') : badge('open', 'warn'),
+          e.resolved_at ? '' : button('Dismiss', async (b) => {
+            if (await act(b, () => api('POST', '/events/' + e.id + '/dismiss'), 'Event dismissed')) {
+              if (onChange) onChange();
+            }
+          }),
+        ];
+      }), 'No events.');
   }
 
   function detailsBlock(d) {
@@ -944,40 +969,109 @@
     return h('div', null, bits.map((b, i) => [i ? ' ' : null, b]));
   }
 
+  function endpointIssueBadge(issue) {
+    if (!issue || issue === 'disabled') return issue === 'disabled' ? badge('disabled') : muted('ok');
+    const kind = {unreachable: 'bad', tls_fail: 'bad', cert_expired: 'bad', cert_expiring: 'warn', not_checked: 'warn'}[issue] || 'warn';
+    return badge(issue.replace(/_/g, ' '), kind);
+  }
+
+  function endpointsNestedTable(eps, dmap) {
+    if (!eps.length) return h('p', {class: 'muted'}, 'No endpoints for this server.');
+    return h('table', {class: 'nested'},
+      h('thead', null, h('tr', null, h('th', null, 'Endpoint'), h('th', null, 'Domain'), h('th', null, 'Issue'))),
+      h('tbody', null, eps.map((ep) => {
+        const d = ep.domain_id && dmap ? dmap.get(ep.domain_id) : null;
+        return h('tr', null,
+          h('td', null, httpsEndpointLink(ep.host, ep.port)),
+          h('td', null, d ? link('/domains/' + d.id, d.fqdn) : muted('—')),
+          h('td', null, endpointIssueBadge(ep.issue)));
+      })));
+  }
+
   pages.servers = async function (root) {
-    const list = (await api('GET', '/servers')) || [];
+    const [listRaw, eps, domains] = await Promise.all([
+      api('GET', '/servers'), api('GET', '/monitor/endpoints'), api('GET', '/domains'),
+    ]);
+    const list = listRaw || [];
+    const dmap = new Map((domains || []).map((d) => [d.id, d]));
+    const byServer = new Map();
+    (eps || []).forEach((ep) => {
+      if (!byServer.has(ep.server_id)) byServer.set(ep.server_id, []);
+      byServer.get(ep.server_id).push(ep);
+    });
     list.sort((a, b) => {
       const score = (s) => (s.open_critical || 0) * 100 + (s.open_warning || 0) * 10 + (s.endpoints_unhealthy || 0) + (s.agent_status === 'offline' || s.agent_status === 'blocked_identity' ? 50 : 0);
       return score(b) - score(a) || serverLabel(a).localeCompare(serverLabel(b));
     });
     const problemCount = list.filter((s) => (s.open_events || 0) > 0 || s.endpoints_unhealthy || s.agent_status === 'offline' || s.agent_status === 'blocked_identity').length;
-    const rows = list.map((s) => [
-      link('/servers/' + s.id, serverLabel(s)),
-      statusBadge(s.agent_status),
-      serverProblems(s),
-      s.last_ip || '',
-      fmt(s.last_seen_at),
-      (s.domain_ids || []).length,
-      s.uses_custom_config ? badge('custom', 'info') : muted('defaults'),
-    ]);
+
+    if (!list.length) {
+      root.replaceChildren(section('Servers',
+        h('p', {class: 'muted'}, 'No servers yet. Agents appear on the Enrollments page after their first contact.')));
+      return;
+    }
+
+    const wrap = h('div', {class: 'tablewrap'}, h('table', null,
+      h('thead', null, h('tr', null,
+        h('th', null, ''), h('th', null, 'Server'), h('th', null, 'Agent'), h('th', null, 'Problems'),
+        h('th', null, 'Last IP'), h('th', null, 'Last seen'), h('th', null, 'Domains'), h('th', null, 'Config'),
+        h('th', null, 'Endpoints'))),
+      h('tbody', null, list.flatMap((s) => {
+        const related = byServer.get(s.id) || [];
+        const toggle = h('button', {type: 'button', class: 'link expand-toggle', 'aria-expanded': 'false'}, related.length ? '▸' : '·');
+        const main = h('tr', {class: 'server-row'},
+          h('td', null, related.length ? toggle : muted('·')),
+          h('td', null, link('/servers/' + s.id, serverLabel(s))),
+          h('td', null, statusBadge(s.agent_status)),
+          h('td', null, serverProblems(s)),
+          h('td', null, s.last_ip || ''),
+          h('td', null, fmt(s.last_seen_at)),
+          h('td', null, String((s.domain_ids || []).length)),
+          h('td', null, s.uses_custom_config ? badge('custom', 'info') : muted('defaults')),
+          h('td', null, related.length ? badge(String(related.length), 'info') : muted('0')));
+        const detail = h('tr', {class: 'server-endpoints', hidden: true},
+          h('td', {colspan: 9}, endpointsNestedTable(related, dmap)));
+        if (related.length) {
+          toggle.addEventListener('click', () => {
+            const open = detail.hidden;
+            detail.hidden = !open;
+            toggle.textContent = open ? '▾' : '▸';
+            toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+          });
+        }
+        return [main, detail];
+      }))));
+
     root.replaceChildren(
       section('Servers',
         h('p', {class: 'muted'}, problemCount ? problemCount + ' server(s) with problems (sorted first).' : 'No open agent/monitor problems.'),
-        table(['Server', 'Agent', 'Problems', 'Last IP', 'Last seen', 'Domains', 'Config'], rows,
-          'No servers yet. Agents appear on the Enrollments page after their first contact.')));
+        wrap));
   };
 
   // ---- server detail
 
   pages.server = async function (root) {
     const base = '/servers/' + ID;
-    const parts = {info: slot(), local: slot(), config: slot()};
-    root.replaceChildren(parts.info, parts.local, parts.config);
+    const parts = {info: slot(), endpoints: slot(), local: slot(), config: slot()};
+    root.replaceChildren(parts.info, parts.endpoints, parts.local, parts.config);
     const reload = () => Promise.all([
       loadInto(parts.info, infoSection),
+      loadInto(parts.endpoints, endpointsSection),
       loadInto(parts.local, localConfigSection),
       loadInto(parts.config, configSection),
     ]);
+
+    async function endpointsSection() {
+      const [eps, domains] = await Promise.all([api('GET', '/monitor/endpoints'), api('GET', '/domains')]);
+      const dmap = new Map((domains || []).map((d) => [d.id, d]));
+      const mine = (eps || []).filter((ep) => ep.server_id === ID);
+      return section('Endpoints',
+        h('p', {class: 'muted'}, mine.length
+          ? mine.length + ' endpoint(s). Checks dial this server\'s last IP with the host as SNI.'
+          : 'No endpoints linked to this server. Add them on the Monitor page.'),
+        endpointsNestedTable(mine, dmap),
+        h('p', null, link('/monitor', 'Open Monitor →')));
+    }
 
     async function infoSection() {
       const [s, domains] = await Promise.all([api('GET', base), api('GET', '/domains')]);
@@ -987,7 +1081,7 @@
         h('dt', null, 'ID'), h('dd', null, code(s.id)),
         h('dt', null, 'Status'), h('dd', null, statusBadge(s.agent_status)),
         h('dt', null, 'Problems'), h('dd', null, serverProblems(s),
-          s.open_events ? h('div', {class: 'small'}, link('/events?unresolved=1', s.open_events + ' open event(s) →')) : null),
+          s.open_events ? h('div', {class: 'small'}, link('/events?unresolved=1&server_id=' + s.id, s.open_events + ' open event(s) →')) : null),
         h('dt', null, 'Key prefix'), h('dd', null, s.key_prefix ? code(s.key_prefix) : '—'),
         h('dt', null, 'Last IP'), h('dd', null, s.last_ip || '—'),
         h('dt', null, 'Last seen'), h('dd', null, fmt(s.last_seen_at)),
@@ -1198,22 +1292,45 @@
   // ---- events
 
   pages.events = async function (root) {
-    const state = {type: '', unresolved: true, limit: 100, offset: 0};
+    const params = new URLSearchParams(location.search);
+    const state = {
+      type: params.get('type') || '',
+      unresolved: params.get('unresolved') !== '0' && params.get('unresolved') !== 'false',
+      limit: Number(params.get('limit') || 100) || 100,
+      offset: Number(params.get('offset') || 0) || 0,
+      server_id: params.get('server_id') || '',
+      domain_id: params.get('domain_id') || '',
+    };
     const out = h('div', null);
+    const [srv, domains] = await Promise.all([serversById(), api('GET', '/domains')]);
+    const dmap = new Map((domains || []).map((d) => [d.id, d]));
     const types = ['', 'cert_expired', 'cert_expiring_soon', 'cert_key_mismatch', 'cert_chain_invalid', 'cert_domain_mismatch_confirmed',
       'cert_expired_upload_confirmed', 'cert_not_yet_valid_upload_confirmed',
       'cert_upload_rejected', 'cert_rollback_performed', 'agent_enroll_pending', 'agent_accepted', 'agent_rejected', 'agent_identity_mismatch',
       'agent_offline', 'agent_apply_failed', 'agent_verify_failed', 'agent_post_check_mismatch', 'agent_config_updated',
       'endpoint_down', 'endpoint_cert_mismatch', 'domain_ungrouped'];
-    const typeSel = select('type', types.map((t) => [t, t || 'all types']), '');
-    const unres = h('input', {type: 'checkbox', checked: true});
-    const limit = select('limit', ['50', '100', '500'], '100');
+    const typeSel = select('type', types.map((t) => [t, t || 'all types']), state.type);
+    const serverSel = select('server_id', [['', 'all servers']].concat(srv.list.map((s) => [s.id, serverLabel(s)])), state.server_id);
+    const domainSel = select('domain_id', [['', 'all domains']].concat((domains || []).map((d) => [d.id, d.fqdn])), state.domain_id);
+    const unres = h('input', {type: 'checkbox', checked: state.unresolved});
+    const limit = select('limit', ['50', '100', '500'], String(state.limit));
     const prev = button('← Newer', () => { state.offset = Math.max(0, state.offset - state.limit); refresh(); });
     const next = button('Older →', () => { state.offset += state.limit; refresh(); });
-    const apply = () => { state.type = typeSel.value; state.unresolved = unres.checked; state.limit = Number(limit.value); state.offset = 0; refresh(); };
-    [typeSel, unres, limit].forEach((x) => x.addEventListener('change', apply));
+    const apply = () => {
+      state.type = typeSel.value;
+      state.unresolved = unres.checked;
+      state.limit = Number(limit.value);
+      state.server_id = serverSel.value;
+      state.domain_id = domainSel.value;
+      state.offset = 0;
+      refresh();
+    };
+    [typeSel, serverSel, domainSel, unres, limit].forEach((x) => x.addEventListener('change', apply));
     const bar = h('div', {class: 'toolbar'},
-      h('label', {class: 'inline'}, 'Type ', typeSel), h('label', {class: 'check'}, unres, 'open only'),
+      h('label', {class: 'inline'}, 'Type ', typeSel),
+      h('label', {class: 'inline'}, 'Server ', serverSel),
+      h('label', {class: 'inline'}, 'Domain ', domainSel),
+      h('label', {class: 'check'}, unres, 'open only'),
       h('label', {class: 'inline'}, 'Per page ', limit), button('Refresh', () => refresh()), prev, next);
     root.replaceChildren(bar, section('Events', out));
 
@@ -1221,11 +1338,13 @@
       const q = new URLSearchParams({limit: state.limit, offset: state.offset});
       if (state.type) q.set('type', state.type);
       if (state.unresolved) q.set('unresolved', '1');
+      if (state.server_id) q.set('server_id', state.server_id);
+      if (state.domain_id) q.set('domain_id', state.domain_id);
       prev.disabled = state.offset === 0;
       await loadInto(out, async () => {
         const list = (await api('GET', '/events?' + q)) || [];
         next.disabled = list.length < state.limit;
-        return eventsTable(list, refresh);
+        return eventsTable(list, refresh, {servers: srv.map, domains: dmap});
       });
     }
 
@@ -1307,30 +1426,132 @@
 
   pages.monitor = async function (root) {
     const summary = h('div', null);
+    const filterBar = h('div', {class: 'toolbar'});
     const list = h('div', null);
     const results = h('div', null);
     const resultsSection = section('Results', results);
     resultsSection.hidden = true;
     const formSlot = h('div', null);
-    root.replaceChildren(summary, section('Endpoints', list), resultsSection, section('New endpoint', formSlot));
+    const dnsSlot = h('div', {class: 'dns-rows'});
+    root.replaceChildren(summary, filterBar, section('Endpoints', list), resultsSection,
+      section('New endpoint', formSlot, dnsSlot));
 
     const [srv, domains] = await Promise.all([serversById(), api('GET', '/domains')]);
     const dmap = new Map((domains || []).map((d) => [d.id, d]));
+    const domainOpts = (domains || []).map((d) => [d.id, d.fqdn]);
+    const serverOpts = srv.list.map((s) => [s.id, serverLabel(s)]);
 
-    const sSel = select('server_id', srv.list.map((s) => [s.id, serverLabel(s)]), '');
-    const dSel = select('domain_id', [['', '— none —']].concat((domains || []).map((d) => [d.id, d.fqdn])), '');
-    const host = input('host', '', {required: true, placeholder: 'www.example.com'});
-    const port = input('port', '443', {type: 'number', min: 1, max: 65535, required: true});
-    const form = h('form', {class: 'row'}, field('Server', sSel), field('Domain (optional)', dSel), field('Host', host), field('Port', port),
-      h('button', {type: 'submit', class: 'primary'}, 'Add endpoint'));
-    form.addEventListener('submit', async (ev) => {
-      ev.preventDefault();
-      if (!sSel.value) { toast('Select a server', 'error'); return; }
-      const body = {server_id: sSel.value, host: host.value.trim(), port: Number(port.value), enabled: true};
-      if (dSel.value) body.domain_id = dSel.value;
-      if (await act(form.querySelector('button'), () => api('POST', '/monitor/endpoints', body), 'Endpoint added')) refresh();
-    });
-    formSlot.append(form);
+    const filterServer = select('filter_server', [['', 'all servers']].concat(serverOpts), '');
+    const filterDomain = select('filter_domain', [['', 'all domains']].concat(domainOpts), '');
+    filterBar.replaceChildren(
+      h('label', {class: 'inline'}, 'Server ', filterServer),
+      h('label', {class: 'inline'}, 'Domain ', filterDomain),
+      button('Refresh', () => refresh()));
+    [filterServer, filterDomain].forEach((x) => x.addEventListener('change', () => refresh()));
+
+    function makeEndpointRow(prefill) {
+      const sSel = select('server_id', [['', '— select —']].concat(serverOpts), (prefill && prefill.server_id) || '');
+      const dSel = select('domain_id', [['', '— select —']].concat(domainOpts), (prefill && prefill.domain_id) || '');
+      const host = input('host', (prefill && prefill.host) || '', {required: true, placeholder: 'www or www.example.com'});
+      const port = input('port', String((prefill && prefill.port) || 443), {type: 'number', min: 1, max: 65535, required: true});
+      const addBtn = h('button', {type: 'button', class: 'primary'}, 'Add endpoint');
+      const dnsBtn = h('button', {type: 'button'}, 'DNS check');
+      const row = h('div', {class: 'row endpoint-add-row'},
+        field('Server', sSel), field('Host', host), field('Domain', dSel), field('Port', port),
+        h('div', {class: 'btns endpoint-add-actions'}, addBtn, dnsBtn));
+
+      function resolvedHost() {
+        const d = dmap.get(dSel.value);
+        return normalizeEndpointHost(host.value, d ? d.fqdn : '');
+      }
+
+      function buildBody() {
+        if (!sSel.value) { toast('Select a server', 'error'); return null; }
+        if (!dSel.value) { toast('Select a domain', 'error'); return null; }
+        const fqdn = resolvedHost();
+        if (!fqdn) { toast('Enter a host', 'error'); return null; }
+        return {
+          server_id: sSel.value, domain_id: dSel.value, host: fqdn,
+          port: Number(port.value) || 443, enabled: true,
+        };
+      }
+
+      async function addOne(silent) {
+        const body = buildBody();
+        if (!body) return false;
+        if (silent) {
+          await api('POST', '/monitor/endpoints', body);
+          return true;
+        }
+        return act(addBtn, () => api('POST', '/monitor/endpoints', body), 'Endpoint added');
+      }
+
+      addBtn.addEventListener('click', async () => {
+        if (await addOne(false)) refresh();
+      });
+      dnsBtn.addEventListener('click', async () => {
+        if (!dSel.value) { toast('Select a domain', 'error'); return; }
+        const fqdn = resolvedHost();
+        if (!fqdn) { toast('Enter a host', 'error'); return; }
+        let res;
+        if (!(await act(dnsBtn, async () => { res = await api('POST', '/monitor/dns-check', {host: fqdn}); }, 'DNS resolved'))) return;
+        renderDNSRows(res, {domain_id: dSel.value, host: fqdn, port: Number(port.value) || 443});
+      });
+      return {row, sSel, dSel, host, port, addOne, addBtn};
+    }
+
+    const primary = makeEndpointRow();
+    formSlot.append(primary.row);
+
+    function renderDNSRows(res, base) {
+      dnsSlot.replaceChildren();
+      const records = (res && res.records) || [];
+      if (!records.length) {
+        dnsSlot.append(h('p', {class: 'muted'}, 'No A records for ' + (res.host || base.host)));
+        return;
+      }
+      const matched = records.filter((r) => r.server_id);
+      const unmatched = records.filter((r) => !r.server_id);
+      const rowControls = [];
+
+      if (matched.length) {
+        const addAll = button('Add all', async (b) => {
+          let ok = 0;
+          const done = await act(b, async () => {
+            for (const ctrl of rowControls) {
+              try {
+                if (await ctrl.addOne(true)) ok++;
+              } catch (e) {
+                toast(errMsg(e), 'error');
+              }
+            }
+            if (!ok) throw new Error('No endpoints added');
+          }, 'Added ' + matched.length + ' endpoint(s)');
+          if (done) { dnsSlot.replaceChildren(); refresh(); }
+        }, 'primary');
+        dnsSlot.append(h('div', {class: 'toolbar'},
+          h('span', {class: 'muted'}, matched.length + ' matching server(s) for ', code(res.host || base.host)),
+          addAll));
+      }
+
+      for (const r of matched) {
+        const ctrl = makeEndpointRow({
+          server_id: r.server_id, domain_id: base.domain_id, host: base.host, port: base.port,
+        });
+        // DNS-suggested rows only need Add (no nested DNS check).
+        const actions = ctrl.row.querySelector('.endpoint-add-actions');
+        if (actions && actions.children[1]) actions.children[1].remove();
+        rowControls.push(ctrl);
+        dnsSlot.append(h('div', {class: 'dns-match'},
+          h('div', {class: 'small muted'}, 'A ' + r.ip + (r.server_label ? ' · ' + r.server_label : '')),
+          ctrl.row));
+      }
+      for (const r of unmatched) {
+        dnsSlot.append(h('div', {class: 'row dns-ignored'},
+          field('Server IP', input('ip', r.ip, {disabled: true})),
+          h('span', {class: 'muted'}, 'not present on system (ignored)')));
+      }
+    }
 
     function issueBadge(issue) {
       if (!issue || issue === 'disabled') return issue === 'disabled' ? badge('disabled') : muted('ok');
@@ -1349,8 +1570,9 @@
     }
 
     function resultTable(rs) {
-      return table(['Checked', 'Reachable', 'TLS', 'Fingerprint', 'Expires', 'Issuer', 'Latency', 'Error'],
-        rs.map((r) => [fmt(r.checked_at), r.reachable ? badge('yes', 'ok') : badge('no', 'bad'), r.tls_ok ? badge('ok', 'ok') : badge('fail', 'bad'),
+      return table(['Checked', 'IP', 'Reachable', 'TLS', 'Fingerprint', 'Expires', 'Issuer', 'Latency', 'Error'],
+        rs.map((r) => [fmt(r.checked_at), r.connected_ip || muted('—'),
+          r.reachable ? badge('yes', 'ok') : badge('no', 'bad'), r.tls_ok ? badge('ok', 'ok') : badge('fail', 'bad'),
           r.peer_fingerprint ? code(shortFp(r.peer_fingerprint)) : '', r.peer_not_after ? expiryBadge(r.peer_not_after) : '',
           r.issuer || '', r.latency_ms === null || r.latency_ms === undefined ? '' : r.latency_ms + ' ms', r.error || '']),
         'No results yet.');
@@ -1358,8 +1580,11 @@
 
     async function refresh() {
       const eps = (await api('GET', '/monitor/endpoints')) || [];
-      const counts = {total: eps.length, unhealthy: 0, unreachable: 0, tls_fail: 0, cert_expired: 0, cert_expiring: 0, not_checked: 0};
-      eps.forEach((ep) => {
+      const fs = filterServer.value;
+      const fd = filterDomain.value;
+      const filtered = eps.filter((ep) => (!fs || ep.server_id === fs) && (!fd || ep.domain_id === fd));
+      const counts = {total: filtered.length, unhealthy: 0, unreachable: 0, tls_fail: 0, cert_expired: 0, cert_expiring: 0, not_checked: 0};
+      filtered.forEach((ep) => {
         if (!ep.healthy && ep.issue !== 'disabled') {
           counts.unhealthy++;
           if (counts[ep.issue] !== undefined) counts[ep.issue]++;
@@ -1375,19 +1600,21 @@
           stat(counts.not_checked, 'Not checked', counts.not_checked ? 'warn' : '', null))));
 
       await loadInto(list, async () => {
-        const rows = eps.map((ep) => {
+        const rows = filtered.map((ep) => {
           const s = srv.map.get(ep.server_id);
           const d = ep.domain_id ? dmap.get(ep.domain_id) : null;
           const l = ep.latest;
           return [
-            ep.host + ':' + ep.port,
+            httpsEndpointLink(ep.host, ep.port),
             s ? link('/servers/' + s.id, serverLabel(s)) : '',
             d ? link('/domains/' + d.id, d.fqdn) : muted('—'),
             issueBadge(ep.issue),
             l ? h('div', null,
               l.peer_not_after ? expiryBadge(l.peer_not_after) : '',
               l.peer_fingerprint ? h('div', {class: 'small'}, code(shortFp(l.peer_fingerprint))) : null,
-              h('div', {class: 'small muted'}, fmt(l.checked_at), l.error ? ' · ' + l.error : '',
+              h('div', {class: 'small muted'},
+                l.connected_ip ? l.connected_ip + ' · ' : '',
+                fmt(l.checked_at), l.error ? ' · ' + l.error : '',
                 l.latency_ms != null ? ' · ' + l.latency_ms + ' ms' : ''))
               : muted('—'),
             btns(

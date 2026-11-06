@@ -85,6 +85,21 @@ func intQuery(r *http.Request, name string, def, maxV int) int {
 	return min(n, maxV)
 }
 
+// uuidQuery parses an optional UUID query param. Empty returns (nil, true).
+// Invalid values write a 400 and return false.
+func (h *Handler) uuidQuery(w http.ResponseWriter, r *http.Request, name string) (*uuid.UUID, bool) {
+	v := r.URL.Query().Get(name)
+	if v == "" {
+		return nil, true
+	}
+	id, err := uuid.Parse(v)
+	if err != nil {
+		h.badRequest(w, "invalid "+name)
+		return nil, false
+	}
+	return &id, true
+}
+
 // fail maps a service error to an HTTP response. Details of unexpected errors
 // are logged, never returned.
 func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {

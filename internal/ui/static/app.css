@@ -183,6 +183,13 @@ details > summary { cursor: pointer; padding: 4px 0; font-weight: 500; }
 details.item { background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 4px 12px; }
 .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 0 0 12px; }
 .toolbar label { margin: 0; }
+.endpoint-add-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: flex-end; padding-bottom: 2px; }
+.dns-rows { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
+.dns-match { border-top: 1px solid var(--line); padding-top: 8px; }
+.dns-ignored { align-items: center; opacity: .85; }
+button.expand-toggle { font-size: 14px; min-width: 1.5em; color: var(--muted); }
+button.expand-toggle:hover { color: var(--fg); background: transparent; }
+tr.server-endpoints td { background: #f7f8fb; }
 .kv { display: grid; grid-template-columns: 160px 1fr; gap: 4px 12px; margin: 0; }
 .kv dt { color: var(--muted); }
 .kv dd { margin: 0; word-break: break-all; }

@@ -15,6 +15,8 @@ import (
 type ListEventsInput struct {
 	UnresolvedOnly bool
 	Type           string
+	DomainID       *uuid.UUID
+	ServerID       *uuid.UUID
 	Limit          int
 	Offset         int
 }
@@ -141,6 +143,7 @@ func (s *Services) ListEvents(ctx context.Context, actor *domain.User, in ListEv
 		return nil, fmt.Errorf("list events: %w", err)
 	}
 	f.UnresolvedOnly, f.Type, f.Limit, f.Offset = in.UnresolvedOnly, in.Type, in.Limit, in.Offset
+	f.FilterDomainID, f.FilterServerID = in.DomainID, in.ServerID
 	evs, err := s.Store.ListEvents(ctx, f)
 	if err != nil {
 		return nil, fmt.Errorf("list events: %w", err)

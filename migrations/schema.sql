@@ -182,7 +182,7 @@ CREATE TABLE domain_servers (
 CREATE TABLE server_endpoints (
     id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     server_id       uuid NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
-    domain_id       uuid REFERENCES domains(id) ON DELETE SET NULL,
+    domain_id       uuid NOT NULL REFERENCES domains(id) ON DELETE CASCADE,
     host            text NOT NULL,
     port            int NOT NULL DEFAULT 443,
     enabled         boolean NOT NULL DEFAULT true,
@@ -199,7 +199,8 @@ CREATE TABLE monitor_results (
     peer_not_after      timestamptz,
     issuer              text,
     error               text,
-    latency_ms          int
+    latency_ms          int,
+    connected_ip        inet
 );
 
 CREATE INDEX monitor_results_endpoint_checked_idx

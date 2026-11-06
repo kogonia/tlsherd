@@ -183,6 +183,7 @@ func (h *Handler) mountAdminAPI(mux *http.ServeMux) {
 	mux.Handle("DELETE /api/v1/monitor/endpoints/{id}", h.authed(h.deleteEndpoint))
 	mux.Handle("GET /api/v1/monitor/endpoints/{id}/results", h.authed(h.listMonitorResults))
 	mux.Handle("POST /api/v1/monitor/endpoints/{id}/check", h.authed(h.forceCheck))
+	mux.Handle("POST /api/v1/monitor/dns-check", h.authed(h.dnsCheck))
 	mux.Handle("GET /api/v1/events", h.authed(h.listEvents))
 	mux.Handle("POST /api/v1/events/{id}/dismiss", h.authed(h.dismissEvent))
 	mux.Handle("GET /api/v1/audit", h.authed(h.listAudit))

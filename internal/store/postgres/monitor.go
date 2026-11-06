@@ -58,12 +58,12 @@ func (s *Store) DeleteEndpoint(ctx context.Context, id uuid.UUID) error {
 // Monitor results
 
 const resultCols = `id, endpoint_id, checked_at, reachable, tls_ok, peer_fingerprint,
-	peer_not_after, issuer, error, latency_ms`
+	peer_not_after, issuer, error, latency_ms, connected_ip`
 
 func scanMonitorResult(r rowScanner) (domain.MonitorResult, error) {
 	var m domain.MonitorResult
 	err := r.Scan(&m.ID, &m.EndpointID, &m.CheckedAt, &m.Reachable, &m.TLSOK,
-		&m.PeerFingerprint, &m.PeerNotAfter, &m.Issuer, &m.Error, &m.LatencyMS)
+		&m.PeerFingerprint, &m.PeerNotAfter, &m.Issuer, &m.Error, &m.LatencyMS, &m.ConnectedIP)
 	return m, err
 }
 
@@ -71,11 +71,11 @@ func scanMonitorResult(r rowScanner) (domain.MonitorResult, error) {
 func (s *Store) InsertMonitorResult(ctx context.Context, r *domain.MonitorResult) error {
 	err := s.q.QueryRow(ctx, `
 		INSERT INTO monitor_results (endpoint_id, checked_at, reachable, tls_ok, peer_fingerprint,
-			peer_not_after, issuer, error, latency_ms)
-		VALUES ($1, COALESCE($2, now()), $3, $4, $5, $6, $7, $8, $9)
+			peer_not_after, issuer, error, latency_ms, connected_ip)
+		VALUES ($1, COALESCE($2, now()), $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING id, checked_at`,
 		r.EndpointID, timeOrNil(r.CheckedAt), r.Reachable, r.TLSOK, r.PeerFingerprint,
-		r.PeerNotAfter, r.Issuer, r.Error, r.LatencyMS,
+		r.PeerNotAfter, r.Issuer, r.Error, r.LatencyMS, r.ConnectedIP,
 	).Scan(&r.ID, &r.CheckedAt)
 	return mapErr("insert monitor result", err)
 }

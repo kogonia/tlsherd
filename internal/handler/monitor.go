@@ -104,9 +104,19 @@ func (h *Handler) forceCheck(w http.ResponseWriter, r *http.Request, u *domain.U
 
 func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, u *domain.User) {
 	q := r.URL.Query()
+	domainID, ok := h.uuidQuery(w, r, "domain_id")
+	if !ok {
+		return
+	}
+	serverID, ok := h.uuidQuery(w, r, "server_id")
+	if !ok {
+		return
+	}
 	out, err := h.svc.ListEventsWithNotify(r.Context(), u, service.ListEventsInput{
 		UnresolvedOnly: q.Get("unresolved") == "true" || q.Get("unresolved") == "1",
 		Type:           q.Get("type"),
+		DomainID:       domainID,
+		ServerID:       serverID,
 		Limit:          intQuery(r, "limit", 100, 1000),
 		Offset:         intQuery(r, "offset", 0, 1_000_000),
 	})
@@ -115,6 +125,23 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, u *domain.U
 		return
 	}
 	writeJSON(w, http.StatusOK, eventNotifyDTOs(out))
+}
+
+type dnsCheckRequest struct {
+	Host string `json:"host"`
+}
+
+func (h *Handler) dnsCheck(w http.ResponseWriter, r *http.Request, u *domain.User) {
+	var req dnsCheckRequest
+	if !h.decodeJSON(w, r, &req, false) {
+		return
+	}
+	out, err := h.svc.LookupEndpointDNS(r.Context(), u, req.Host)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (h *Handler) dismissEvent(w http.ResponseWriter, r *http.Request, u *domain.User) {

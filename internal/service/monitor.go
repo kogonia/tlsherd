@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"sort"
 	"strconv"
 	"strings"
@@ -82,11 +83,27 @@ func (s *Services) monitorSettings(ctx context.Context) monitorSettings {
 }
 
 func validateHost(host string) (string, error) {
-	host = normalizeText(host)
+	host = strings.ToLower(strings.TrimSuffix(normalizeText(host), "."))
 	if host == "" || len(host) > 253 || strings.ContainsAny(host, " /\\@?#") {
 		return "", invalidf("invalid host")
 	}
 	return host, nil
+}
+
+// normalizeEndpointHost appends domainFQDN when host does not already end with that suffix.
+func normalizeEndpointHost(host, domainFQDN string) (string, error) {
+	host, err := validateHost(host)
+	if err != nil {
+		return "", err
+	}
+	domainFQDN = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(domainFQDN), "."))
+	if domainFQDN == "" {
+		return host, nil
+	}
+	if host == domainFQDN || strings.HasSuffix(host, "."+domainFQDN) {
+		return host, nil
+	}
+	return validateHost(host + "." + domainFQDN)
 }
 
 // ---------------------------------------------------------------------------
@@ -114,13 +131,13 @@ func (s *Services) requireEndpointRead(ctx context.Context, actor *domain.User, 
 	return s.requireDomainPerm(ctx, actor, *domainID, permRead)
 }
 
-// CreateEndpoint adds a monitored endpoint.
+// CreateEndpoint adds a monitored endpoint. DomainID is required; Host is
+// normalized against the domain FQDN (hostname becomes host.domain when needed).
 func (s *Services) CreateEndpoint(ctx context.Context, actor *domain.User, in EndpointInput) (*domain.ServerEndpoint, error) {
-	if err := s.requireEndpointWrite(ctx, actor, in.DomainID); err != nil {
-		return nil, err
+	if in.DomainID == nil {
+		return nil, invalidf("domain_id is required")
 	}
-	host, err := validateHost(in.Host)
-	if err != nil {
+	if err := s.requireEndpointWrite(ctx, actor, in.DomainID); err != nil {
 		return nil, err
 	}
 	port := in.Port
@@ -130,18 +147,30 @@ func (s *Services) CreateEndpoint(ctx context.Context, actor *domain.User, in En
 	if port < 1 || port > 65535 {
 		return nil, invalidf("port must be 1-65535")
 	}
-	ep := &domain.ServerEndpoint{ServerID: in.ServerID, DomainID: in.DomainID, Host: host, Port: port, Enabled: true}
+	ep := &domain.ServerEndpoint{ServerID: in.ServerID, DomainID: in.DomainID, Port: port, Enabled: true}
 	if in.Enabled != nil {
 		ep.Enabled = *in.Enabled
 	}
-	err = s.Store.Tx(ctx, func(tx store.Store) error {
+	err := s.Store.Tx(ctx, func(tx store.Store) error {
 		if _, err := tx.GetServer(ctx, in.ServerID); err != nil {
 			if errors.Is(err, domain.ErrNotFound) {
 				return invalidf("server does not exist")
 			}
 			return err
 		}
-		if in.DomainID != nil && !isAdmin(actor) {
+		dom, err := tx.GetDomain(ctx, *in.DomainID)
+		if err != nil {
+			if errors.Is(err, domain.ErrNotFound) {
+				return invalidf("domain does not exist")
+			}
+			return err
+		}
+		host, err := normalizeEndpointHost(in.Host, dom.FQDN)
+		if err != nil {
+			return err
+		}
+		ep.Host = host
+		if !isAdmin(actor) {
 			dss, err := tx.ListDomainServersByDomain(ctx, *in.DomainID)
 			if err != nil {
 				return err
@@ -158,7 +187,7 @@ func (s *Services) CreateEndpoint(ctx context.Context, actor *domain.User, in En
 			return err
 		}
 		return s.audit(ctx, tx, actor, "endpoint.create", "endpoint", ep.ID.String(),
-			map[string]any{"host": host, "port": port, "server_id": in.ServerID})
+			map[string]any{"host": ep.Host, "port": port, "server_id": in.ServerID})
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create endpoint: %w", err)
@@ -178,7 +207,20 @@ func (s *Services) UpdateEndpoint(ctx context.Context, actor *domain.User, id uu
 			return err
 		}
 		if p.Host != nil {
-			if ep.Host, err = validateHost(*p.Host); err != nil {
+			host := *p.Host
+			if ep.DomainID != nil {
+				dom, gerr := tx.GetDomain(ctx, *ep.DomainID)
+				if gerr != nil && !errors.Is(gerr, domain.ErrNotFound) {
+					return gerr
+				}
+				if dom != nil {
+					if ep.Host, err = normalizeEndpointHost(host, dom.FQDN); err != nil {
+						return err
+					}
+				} else if ep.Host, err = validateHost(host); err != nil {
+					return err
+				}
+			} else if ep.Host, err = validateHost(host); err != nil {
 				return err
 			}
 		}
@@ -200,6 +242,63 @@ func (s *Services) UpdateEndpoint(ctx context.Context, actor *domain.User, id uu
 	})
 	if err != nil {
 		return nil, fmt.Errorf("update endpoint: %w", err)
+	}
+	return out, nil
+}
+
+// DNSCheckRecord is one A-record result matched against known servers.
+type DNSCheckRecord struct {
+	IP          string     `json:"ip"`
+	ServerID    *uuid.UUID `json:"server_id"`
+	ServerLabel string     `json:"server_label,omitempty"`
+}
+
+// DNSCheckResult is the response for LookupEndpointDNS.
+type DNSCheckResult struct {
+	Host    string           `json:"host"`
+	Records []DNSCheckRecord `json:"records"`
+}
+
+// LookupEndpointDNS resolves host to IPv4 A records and matches them to
+// servers visible to actor by last_ip.
+func (s *Services) LookupEndpointDNS(ctx context.Context, actor *domain.User, host string) (*DNSCheckResult, error) {
+	host, err := validateHost(host)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip4", host)
+	if err != nil {
+		return nil, invalidf("DNS lookup failed: %v", err)
+	}
+	servers, err := s.ListServers(ctx, actor)
+	if err != nil {
+		return nil, fmt.Errorf("dns check: %w", err)
+	}
+	byIP := make(map[netip.Addr]ServerView, len(servers))
+	for _, sv := range servers {
+		if sv.LastIP != nil {
+			byIP[*sv.LastIP] = sv
+		}
+	}
+	out := &DNSCheckResult{Host: host, Records: make([]DNSCheckRecord, 0, len(ips))}
+	seen := make(map[netip.Addr]struct{}, len(ips))
+	for _, ip := range ips {
+		addr, ok := netip.AddrFromSlice(ip)
+		if !ok {
+			continue
+		}
+		addr = addr.Unmap()
+		if _, dup := seen[addr]; dup {
+			continue
+		}
+		seen[addr] = struct{}{}
+		rec := DNSCheckRecord{IP: addr.String()}
+		if sv, ok := byIP[addr]; ok {
+			id := sv.ID
+			rec.ServerID = &id
+			rec.ServerLabel = sv.Label
+		}
+		out.Records = append(out.Records, rec)
 	}
 	return out, nil
 }
@@ -352,7 +451,11 @@ func (s *Services) CheckEndpoint(ctx context.Context, ep *domain.ServerEndpoint)
 		}
 	}
 
-	res := s.probe(ctx, ep, sni, set.Timeout)
+	srv, err := s.Store.GetServer(ctx, ep.ServerID)
+	if err != nil {
+		return nil, fmt.Errorf("check endpoint: %w", err)
+	}
+	res := s.probe(ctx, ep, srv, sni, set.Timeout)
 	if err := s.Store.InsertMonitorResult(ctx, res); err != nil {
 		return nil, fmt.Errorf("check endpoint: %w", err)
 	}
@@ -360,9 +463,14 @@ func (s *Services) CheckEndpoint(ctx context.Context, ep *domain.ServerEndpoint)
 	if res.LatencyMS != nil {
 		latency = *res.LatencyMS
 	}
+	connected := ""
+	if res.ConnectedIP != nil {
+		connected = res.ConnectedIP.String()
+	}
 	s.log().Debug("endpoint probe",
 		"component", "monitor", "operation", "check_endpoint",
 		"endpoint_id", ep.ID, "host", ep.Host, "port", ep.Port, "sni", sni,
+		"connected_ip", connected,
 		"reachable", res.Reachable, "tls_ok", res.TLSOK, "latency_ms", latency)
 
 	downKey := DedupKey(EvEndpointDown, ep.ID.String())
@@ -418,27 +526,32 @@ func (s *Services) CheckEndpoint(ctx context.Context, ep *domain.ServerEndpoint)
 	return res, nil
 }
 
-// probe performs the TLS handshake. Chain verification is intentionally
-// skipped: the monitor compares the served leaf fingerprint with the expected
-// one instead of trusting any CA.
-func (s *Services) probe(ctx context.Context, ep *domain.ServerEndpoint, sni string, timeout time.Duration) *domain.MonitorResult {
+// probe dials the server's last_ip and performs a TLS handshake with sni.
+// Chain verification is intentionally skipped: the monitor compares the served
+// leaf fingerprint with the expected one instead of trusting any CA.
+func (s *Services) probe(ctx context.Context, ep *domain.ServerEndpoint, srv *domain.Server, sni string, timeout time.Duration) *domain.MonitorResult {
 	res := &domain.MonitorResult{EndpointID: ep.ID, CheckedAt: s.now()}
 	fail := func(err error) *domain.MonitorResult {
 		msg := truncate(err.Error(), 512)
 		res.Error = &msg
 		return res
 	}
+	if srv == nil || srv.LastIP == nil {
+		return fail(errors.New("server has no last_ip"))
+	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	start := time.Now()
 	var d net.Dialer
-	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(ep.Host, strconv.Itoa(ep.Port)))
+	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(srv.LastIP.String(), strconv.Itoa(ep.Port)))
 	if err != nil {
 		return fail(err)
 	}
 	defer conn.Close()
 	res.Reachable = true
+	ip := *srv.LastIP
+	res.ConnectedIP = &ip
 
 	tc := tls.Client(conn, &tls.Config{
 		ServerName:         sni,

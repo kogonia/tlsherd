@@ -206,16 +206,17 @@ type ServerEndpoint struct {
 }
 
 type MonitorResult struct {
-	ID              int64      `json:"id"`
-	EndpointID      uuid.UUID  `json:"endpoint_id"`
-	CheckedAt       time.Time  `json:"checked_at"`
-	Reachable       bool       `json:"reachable"`
-	TLSOK           bool       `json:"tls_ok"`
-	PeerFingerprint *string    `json:"peer_fingerprint"`
-	PeerNotAfter    *time.Time `json:"peer_not_after"`
-	Issuer          *string    `json:"issuer"`
-	Error           *string    `json:"error"`
-	LatencyMS       *int       `json:"latency_ms"`
+	ID              int64       `json:"id"`
+	EndpointID      uuid.UUID   `json:"endpoint_id"`
+	CheckedAt       time.Time   `json:"checked_at"`
+	Reachable       bool        `json:"reachable"`
+	TLSOK           bool        `json:"tls_ok"`
+	PeerFingerprint *string     `json:"peer_fingerprint"`
+	PeerNotAfter    *time.Time  `json:"peer_not_after"`
+	Issuer          *string     `json:"issuer"`
+	Error           *string     `json:"error"`
+	LatencyMS       *int        `json:"latency_ms"`
+	ConnectedIP     *netip.Addr `json:"connected_ip"`
 }
 
 type Event struct {

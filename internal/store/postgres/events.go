@@ -234,6 +234,12 @@ func (s *Store) ListEvents(ctx context.Context, f store.EventFilter) ([]domain.E
 	if f.Type != "" {
 		conds = append(conds, "type = "+arg(f.Type))
 	}
+	if f.FilterDomainID != nil {
+		conds = append(conds, "domain_id = "+arg(*f.FilterDomainID))
+	}
+	if f.FilterServerID != nil {
+		conds = append(conds, "server_id = "+arg(*f.FilterServerID))
+	}
 
 	var scope []string
 	if f.DomainIDs != nil {
