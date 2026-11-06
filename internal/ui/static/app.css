@@ -210,6 +210,23 @@ details.item { background: var(--card); border: 1px solid var(--line); border-ra
   display: inline-block; width: auto; max-width: none; margin: 0 0 0 4px; vertical-align: middle;
 }
 .pager > button { flex: 0 0 auto; }
+.tabs {
+  display: flex; gap: 0; flex-wrap: wrap; border-bottom: 1px solid var(--line);
+  margin: -4px 0 14px;
+}
+.tab {
+  font: inherit; background: transparent; border: 0; border-bottom: 2px solid transparent;
+  padding: 8px 12px; margin: 0 0 -1px; cursor: pointer; color: var(--muted);
+}
+.tab:hover { color: var(--fg); background: #f3f5f9; }
+.tab.active { color: var(--fg); border-bottom-color: var(--primary); font-weight: 600; }
+.tab-panel[hidden] { display: none !important; }
+.cmd-preview {
+  margin: 8px 0 0; padding: 8px 10px; background: #f0f2f6; border: 1px solid var(--line);
+  border-radius: 4px; font-family: var(--mono); font-size: 12.5px; word-break: break-all;
+}
+.cmd-preview .label { display: block; color: var(--muted); font-family: inherit; font-size: 12px; margin-bottom: 4px; }
+.restart-fields > .hidden-field { display: none !important; }
 .endpoint-add-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: flex-end; padding-bottom: 2px; }
 .dns-rows { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
 .dns-match { border-top: 1px solid var(--line); padding-top: 8px; }

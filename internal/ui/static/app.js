@@ -312,6 +312,51 @@
       body);
   }
 
+  // tabbedCard: one card with a tab strip. items = [{id, label, body}].
+  // activeId selects the initial tab; onChange(id) fires after a switch.
+  function tabbedCard(items, activeId, onChange) {
+    const list = (items || []).filter(Boolean);
+    let current = list.some((t) => t.id === activeId) ? activeId : (list[0] && list[0].id);
+    const buttons = list.map((t) => {
+      const b = h('button', {type: 'button', class: 'tab' + (t.id === current ? ' active' : ''), 'data-tab': t.id}, t.label);
+      b.addEventListener('click', () => activate(t.id));
+      return b;
+    });
+    const panels = list.map((t) => {
+      const p = h('div', {class: 'tab-panel', 'data-tab': t.id, hidden: t.id !== current}, t.body);
+      return p;
+    });
+    function activate(id) {
+      if (id === current) return;
+      current = id;
+      buttons.forEach((b) => b.classList.toggle('active', b.dataset.tab === id));
+      panels.forEach((p) => { p.hidden = p.dataset.tab !== id; });
+      if (onChange) onChange(id);
+    }
+    return h('section', {class: 'card tabbed'},
+      h('div', {class: 'tabs', role: 'tablist'}, buttons),
+      h('div', {class: 'tab-panels'}, panels));
+  }
+
+  // previewRestartArgv mirrors agent restartCommand (sample domain for {domain}).
+  function previewRestartArgv(type, name, reloadOnly, command, sampleDomain) {
+    const fqdn = sampleDomain || 'example.com';
+    const cmd = (command || []).map((a) => String(a).split('{domain}').join(fqdn));
+    switch (type || 'systemd') {
+      case 'systemd':
+        if (!name) return null;
+        return ['systemctl', reloadOnly ? 'reload' : 'restart', name];
+      case 'docker':
+        if (!name) return null;
+        if (reloadOnly && cmd.length) return ['docker', 'exec', name].concat(cmd);
+        return ['docker', 'restart', name];
+      case 'exec':
+        return cmd.length ? cmd : null;
+      default:
+        return null;
+    }
+  }
+
   function field(label, input, help) {
     return h('label', null, label, input, help ? h('span', {class: 'help'}, help) : null);
   }
@@ -1176,20 +1221,31 @@
 
   pages.server = async function (root) {
     const base = '/servers/' + ID;
-    const parts = {info: slot(), endpoints: slot(), local: slot(), config: slot()};
-    root.replaceChildren(parts.info, parts.endpoints, parts.local, parts.config);
+    const tabParam = () => new URLSearchParams(location.search).get('tab') || 'server';
+    const parts = {server: slot(), endpoints: slot(), local: slot(), schedule: slot()};
+    root.replaceChildren(tabbedCard([
+      {id: 'server', label: 'Server', body: parts.server},
+      {id: 'endpoints', label: 'Endpoints', body: parts.endpoints},
+      {id: 'local', label: 'Agent local config', body: parts.local},
+      {id: 'schedule', label: 'Schedule configuration', body: parts.schedule},
+    ], tabParam(), (id) => {
+      const u = new URL(location.href);
+      if (id === 'server') u.searchParams.delete('tab');
+      else u.searchParams.set('tab', id);
+      history.replaceState(null, '', u.pathname + u.search + u.hash);
+    }));
     const reload = () => Promise.all([
-      loadInto(parts.info, infoSection),
+      loadInto(parts.server, infoSection),
       loadInto(parts.endpoints, endpointsSection),
       loadInto(parts.local, localConfigSection),
-      loadInto(parts.config, configSection),
+      loadInto(parts.schedule, configSection),
     ]);
 
     async function endpointsSection() {
       const [eps, domains] = await Promise.all([api('GET', '/monitor/endpoints'), api('GET', '/domains')]);
       const dmap = new Map((domains || []).map((d) => [d.id, d]));
       const mine = (eps || []).filter((ep) => ep.server_id === ID);
-      return section('Endpoints',
+      return h('div', null,
         h('p', {class: 'muted'}, mine.length
           ? mine.length + ' endpoint(s). Checks dial this server\'s last IP with the host as SNI.'
           : 'No endpoints linked to this server. Add them on the Monitor page.'),
@@ -1235,7 +1291,7 @@
         if (!confirm('Delete this server? Its assignments are removed and the agent must re-enroll.')) return;
         if (await act(b, () => api('DELETE', base), 'Server deleted')) location.href = '/servers';
       }, 'danger');
-      return section('Server', info, rename, h('h3', null, 'Agent key'), h('p', null, btns(rotate, revoke)), h('p', null, del));
+      return h('div', null, info, rename, h('h3', null, 'Agent key'), h('p', null, btns(rotate, revoke)), h('p', null, del));
     }
 
     async function localConfigSection() {
@@ -1243,6 +1299,7 @@
       const services = (view.services || []).map((s) => [s.id, s.label || s.id]);
       const src = view.pending || view.reported || {service: 'custom', verify: {}, restart: {type: 'systemd'}, install: {}};
       const catalog = new Map((view.services || []).map((s) => [s.id, s]));
+      const sampleDomain = 'example.com';
       const banners = [];
       if (view.conflict) {
         banners.push(h('div', {class: 'banner bad'},
@@ -1263,10 +1320,17 @@
       const svcSel = select('service', services.length ? services : [['custom', 'Custom']], src.service || 'custom');
       const verifyCmd = h('textarea', {name: 'verify_command', rows: 3}, (src.verify && src.verify.command || []).join('\n'));
       const verifyTimeout = input('verify_timeout', (src.verify && src.verify.timeout) || '30s');
+      const verifyPreview = h('div', {class: 'cmd-preview'});
       const restartType = select('restart_type', ['systemd', 'docker', 'exec'], (src.restart && src.restart.type) || 'systemd');
       const restartName = input('restart_name', (src.restart && src.restart.name) || '');
       const reloadOnly = h('input', {type: 'checkbox', checked: !!(src.restart && src.restart.reload_only)});
       const restartCmd = h('textarea', {name: 'restart_command', rows: 3}, (src.restart && src.restart.command || []).join('\n'));
+      const nameField = field('Unit / container name', restartName);
+      const reloadField = h('label', {class: 'check'}, reloadOnly, 'Reload instead of restart');
+      const cmdField = field('Command', restartCmd, 'One argument per line. Supports {domain}.');
+      const restartPreview = h('div', {class: 'cmd-preview'});
+      const restartFields = h('div', {class: 'restart-fields'},
+        field('Type', restartType), nameField, reloadField, cmdField, restartPreview);
       const installMode = select('install_mode', ['symlink', 'copy'], (src.install && src.install.mode) || 'symlink');
       const certName = input('cert_name', (src.install && src.install.cert_name) || 'cert.pem');
       const keyName = input('key_name', (src.install && src.install.key_name) || 'key.pem');
@@ -1280,6 +1344,42 @@
       const strictCert = h('input', {type: 'checkbox', checked: src.strict_cert_check !== false});
       const confirmBox = h('input', {type: 'checkbox'});
 
+      const lines = (t) => t.value.split('\n').map((x) => x.trim()).filter(Boolean);
+
+      function syncRestartFields() {
+        const t = restartType.value || 'systemd';
+        const showName = t === 'systemd' || t === 'docker';
+        const showReload = t === 'systemd' || t === 'docker';
+        const showCmd = t === 'exec' || (t === 'docker' && reloadOnly.checked);
+        nameField.classList.toggle('hidden-field', !showName);
+        reloadField.classList.toggle('hidden-field', !showReload);
+        cmdField.classList.toggle('hidden-field', !showCmd);
+        if (nameField.firstChild && nameField.firstChild.nodeType === 3) {
+          nameField.firstChild.textContent = t === 'docker' ? 'Container name' : 'Unit name';
+        }
+        if (t === 'systemd') {
+          restartName.placeholder = 'e.g. nginx';
+          reloadField.lastChild.textContent = 'Reload instead of restart (systemctl reload)';
+        } else if (t === 'docker') {
+          restartName.placeholder = 'container name';
+          reloadField.lastChild.textContent = 'Reload via docker exec (needs command below)';
+        }
+        if (cmdField.firstChild && cmdField.firstChild.nodeType === 3) {
+          cmdField.firstChild.textContent = t === 'docker' ? 'Exec command (inside container)' : 'Command';
+        }
+        const argv = previewRestartArgv(t, restartName.value.trim(), reloadOnly.checked, lines(restartCmd), sampleDomain);
+        restartPreview.replaceChildren(
+          h('span', {class: 'label'}, 'Agent will run'),
+          argv ? code(argv.join(' ')) : muted(t === 'exec' ? 'Set a command' : t === 'docker' && reloadOnly.checked ? 'Set container name and exec command' : 'Set unit / container name'));
+      }
+
+      function syncVerifyPreview() {
+        const argv = lines(verifyCmd);
+        verifyPreview.replaceChildren(
+          h('span', {class: 'label'}, 'Agent will run before restart'),
+          argv.length ? code(argv.join(' ')) : muted('Disabled (empty command)'));
+      }
+
       function applyCatalogDefaults(id) {
         const c = catalog.get(id);
         if (!c) return;
@@ -1289,22 +1389,40 @@
         restartName.value = (c.restart && c.restart.name) || '';
         reloadOnly.checked = !!(c.restart && c.restart.reload_only);
         restartCmd.value = (c.restart && c.restart.command || []).join('\n');
+        syncRestartFields();
+        syncVerifyPreview();
       }
       svcSel.addEventListener('change', () => {
         if (confirm('Fill verify/restart from the ' + svcSel.value + ' catalog defaults?')) applyCatalogDefaults(svcSel.value);
       });
+      [restartType, restartName, reloadOnly, restartCmd].forEach((el) => {
+        el.addEventListener('change', syncRestartFields);
+        el.addEventListener('input', syncRestartFields);
+      });
+      [verifyCmd].forEach((el) => {
+        el.addEventListener('input', syncVerifyPreview);
+        el.addEventListener('change', syncVerifyPreview);
+      });
+      syncRestartFields();
+      syncVerifyPreview();
 
       function readLocal() {
-        const lines = (t) => t.value.split('\n').map((x) => x.trim()).filter(Boolean);
+        const t = restartType.value || 'systemd';
+        const restart = {type: t, name: '', reload_only: false, command: []};
+        if (t === 'systemd') {
+          restart.name = restartName.value.trim();
+          restart.reload_only = reloadOnly.checked;
+        } else if (t === 'docker') {
+          restart.name = restartName.value.trim();
+          restart.reload_only = reloadOnly.checked;
+          if (reloadOnly.checked) restart.command = lines(restartCmd);
+        } else {
+          restart.command = lines(restartCmd);
+        }
         return {
           service: svcSel.value,
           verify: {command: lines(verifyCmd), timeout: verifyTimeout.value.trim() || '30s'},
-          restart: {
-            type: restartType.value,
-            name: restartName.value.trim(),
-            reload_only: reloadOnly.checked,
-            command: lines(restartCmd),
-          },
+          restart,
           install: {
             mode: installMode.value,
             cert_name: certName.value.trim() || 'cert.pem',
@@ -1337,7 +1455,7 @@
         if (await act(b, () => api('PUT', base + '/local-config', {reset_all: true, service: svcSel.value, confirm: true}), 'Defaults queued')) reload();
       });
 
-      return section('Agent local config (Edit)',
+      return h('div', null,
         ...banners,
         h('div', {class: 'banner warn'},
           'Agent-priority settings on the host ($TLSHERD_AGENT_DIR/agent.local.cfg, default /var/lib/tlsherd-agent/). Saving queues a push on the next poll; the agent keeps one previous version as .prev.'),
@@ -1345,12 +1463,9 @@
           field('Service type', svcSel, 'Selecting a service can fill catalog defaults for verify/restart.')),
         h('fieldset', null, h('legend', null, 'Pre-start check (verify)'),
           field('Command', verifyCmd, 'One argument per line, e.g. nginx then -t. Empty disables the check.'),
-          field('Timeout', verifyTimeout)),
-        h('fieldset', null, h('legend', null, 'Restart'),
-          field('Type', restartType),
-          field('Unit / container name', restartName),
-          h('label', {class: 'check'}, reloadOnly, 'Reload instead of restart'),
-          field('Command (exec / docker reload)', restartCmd, 'One argument per line.')),
+          field('Timeout', verifyTimeout),
+          verifyPreview),
+        h('fieldset', null, h('legend', null, 'Restart'), restartFields),
         h('fieldset', null, h('legend', null, 'Install & paths'),
           field('Install mode', installMode),
           field('Filenames in versions/current', h('div', {class: 'row'}, certName, keyName, chainName, fullchainName),
@@ -1383,10 +1498,10 @@
         if (!confirm('Replace this server\'s schedule config with a copy of the current agent defaults?')) return;
         if (await act(b, () => api('PUT', base + '/config', {force_from_defaults: true, confirm: true}), 'Config reset from defaults')) reload();
       });
-      return section('Schedule configuration (server-authoritative)',
+      return h('div', null,
         h('p', null, eff.uses_custom_config ? badge('custom config', 'info') : badge('using defaults', 'ok'),
           ' version ', eff.config_version, ' · hash ', code(shortFp(eff.config_hash))),
-        h('p', {class: 'muted'}, 'Poll intervals, maintenance window, backups and post-check. Service verify/restart live in Agent local config above.'),
+        h('p', {class: 'muted'}, 'Poll intervals, maintenance window, backups and post-check. Service verify/restart live under Agent local config.'),
         form.node,
         h('p', null, h('label', {class: 'check'}, confirmBox, 'I confirm that I am replacing this server\'s schedule configuration')),
         h('p', null, btns(save, force)),
