@@ -124,7 +124,19 @@ label.inline, .check { display: inline-flex; align-items: center; gap: 6px; font
 input[type=text], input[type=number], input[type=password], input:not([type]), select, textarea {
   display: block; width: 100%; max-width: 480px; padding: 6px 8px; border: 1px solid #b9c0cd; border-radius: 4px; font: inherit; background: #fff; margin-top: 3px;
 }
-select { padding-right: 28px; }
+/* Native select arrows ignore padding; draw our own with room from the right edge. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding-right: 2rem;
+  background-color: #fff;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23667085' d='M1.4 0.6L6 5.2 10.6.6 12 2 6 8 0 2z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.65rem center;
+  background-size: 12px 8px;
+}
+select::-ms-expand { display: none; }
 td input, td select { margin-top: 0; max-width: 220px; }
 textarea { font-family: var(--mono); font-size: 12.5px; max-width: 640px; }
 .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
