@@ -47,19 +47,25 @@ Defaults: `TLSHERD_AGENT_DIR=/var/lib/tlsherd-agent`, `TLSHERD_CERT_ROOT=/etc/tl
 
 ## Environment and CLI
 
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `TLSHERD_SERVER_URL` | *(required)* | Base URL of the **agent** listener (e.g. `https://tlsherd.example.com:8444`) |
-| `TLSHERD_CERT_ROOT` | `/etc/tls` | Host cert tree: `<root>/<fqdn>/{current,versions,backups}` |
-| `TLSHERD_AGENT_DIR` | `/var/lib/tlsherd-agent` | Agent home (state + both config files) |
-| `TLSHERD_CA_FILE` | — | Extra CA PEM to trust the server certificate |
-| `TLSHERD_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
+| Variable | Flag | Default | Meaning |
+| --- | --- | --- | --- |
+| `TLSHERD_SERVER_URL` | `-s` | *(required)* | Base URL of the **agent** listener (e.g. `https://tlsherd.example.com:8444`) |
+| `TLSHERD_CERT_ROOT` | `-d` | `/etc/tls` | Host cert tree: `<root>/<fqdn>/{current,versions,backups}` |
+| `TLSHERD_AGENT_DIR` | `-a` | `/var/lib/tlsherd-agent` | Agent home (state + both config files) |
+| `TLSHERD_LOG_LEVEL` | `-l` | `info` | `debug` / `info` / `warn` / `error` |
+| `TLSHERD_CA_FILE` | — | — | Extra CA PEM to trust the server certificate |
+
+Flags override the matching environment variable when set.
 
 | Flag | Meaning |
 | --- | --- |
 | `--once` | One enroll/poll cycle, then exit |
 | `--dry-run` | Plan only: no file/state/service changes |
 | `--insecure-skip-verify` | Skip server TLS verify (**lab only**) |
+
+```sh
+tlsherd-agent -s https://tlsherd.example.com:8444 -d /cert -a /var/lib/tlsherd-agent -l debug --once --dry-run
+```
 
 ## Two config layers
 
