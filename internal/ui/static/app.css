@@ -264,6 +264,14 @@ table.nested th, table.nested td { padding: 3px 6px; vertical-align: top; }
 .banner.warn { background: var(--warn-bg); border-color: #e6c35c; }
 .banner.bad { background: var(--bad-bg); border-color: #e69a94; }
 
+.editor-panel {
+  border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; margin: 12px 0;
+  background: var(--surface-4);
+}
+.editor-panel > .card-head { margin: 0 0 10px; }
+.editor-panel > .card-head > h3 { margin: 0; font-size: 14px; }
+.checks.domain-map { max-height: 320px; }
+
 #toasts { position: fixed; top: 54px; right: 14px; z-index: 50; display: flex; flex-direction: column; gap: 8px; max-width: 420px; }
 .toast { padding: 9px 13px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); box-shadow: 0 2px 8px var(--shadow); white-space: pre-wrap; word-break: break-word; color: var(--fg); }
 .toast.ok { border-color: #8fd19e; background: var(--ok-bg); }

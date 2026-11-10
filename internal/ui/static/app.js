@@ -1212,30 +1212,42 @@
         h('p', {class: 'help'}, 'Rollback re-activates an older version. Delete removes a non-current version from history (and unused certificate files).'));
     }
 
-    async function assignSection() {
-      const [assigns, srv] = await Promise.all([api('GET', base + '/servers'), serversById()]);
-      const form = h('form', null);
-      const sSel = select('server_id', srv.list.map((s) => [s.id, serverLabel(s)]), '');
-      const mode = select('install_mode', [['', 'agent default'], ['symlink', 'symlink'], ['copy', 'copy']], '');
+    // domainServerEditor: Add/Edit panel for one domain↔server assignment.
+    function domainServerEditor(opts) {
+      const initial = opts.initial || {};
+      const locked = !!opts.locked;
+      const serverOpts = (opts.servers || []).map((s) => [s.id, s.label || serverLabel(s)]);
+      const sSel = select('server_id', serverOpts.length ? serverOpts : [['', '—']], initial.server_id || (serverOpts[0] && serverOpts[0][0]) || '');
+      if (locked) sSel.disabled = true;
+      const mode = select('install_mode', [['', 'agent default'], ['symlink', 'symlink'], ['copy', 'copy']], initial.install_mode || '');
       const inputs = {
-        cert_path: input('cert_path', '', {placeholder: 'leaf; relative to cert_root'}),
-        key_path: input('key_path', ''),
-        chain_path: input('chain_path', ''),
-        fullchain_path: input('fullchain_path', '', {placeholder: 'leaf+chain; e.g. {domain}.crt'}),
+        cert_path: input('cert_path', initial.cert_path || '', {placeholder: 'leaf; relative to cert_root'}),
+        key_path: input('key_path', initial.key_path || ''),
+        chain_path: input('chain_path', initial.chain_path || ''),
+        fullchain_path: input('fullchain_path', initial.fullchain_path || '', {placeholder: 'leaf+chain; e.g. {domain}.crt'}),
       };
       const restart = h('textarea', {name: 'restart_override', rows: 3, placeholder: '{"type":"systemd","name":"nginx","reload_only":true}'}, '');
-      form.append(
-        h('div', {class: 'row'}, field('Server', sSel), field('Install mode', mode)),
+      if (initial.restart_override) restart.value = json(initial.restart_override);
+      const form = h('form', null,
+        h('div', {class: 'row'},
+          locked
+            ? field('Server', h('div', {class: 'mono'}, serverOpts[0] ? serverOpts[0][1] : initial.server_id))
+            : field('Server', sSel),
+          field('Install mode', mode)),
         h('div', {class: 'row'},
           field('Certificate path (leaf)', inputs.cert_path),
           field('Key path', inputs.key_path),
           field('Chain path', inputs.chain_path),
           field('Fullchain path', inputs.fullchain_path)),
-        field('Restart override (JSON, optional)', restart, 'Optional per-domain override of the agent local restart section. Prefer editing Agent local config on the server page.'),
-        h('p', null, h('button', {type: 'submit', class: 'primary'}, 'Save assignment')));
+        field('Restart override (JSON, optional)', restart,
+          'Optional per-domain override of the agent local restart section. Prefer editing Agent local config on the server page.'),
+        h('p', null, btns(
+          h('button', {type: 'submit', class: 'primary'}, opts.submitLabel || 'Save'),
+          button('Cancel', () => { if (opts.onCancel) opts.onCancel(); }))));
       form.addEventListener('submit', async (ev) => {
         ev.preventDefault();
-        if (!sSel.value) { toast('Select a server', 'error'); return; }
+        const serverId = locked ? (initial.server_id || sSel.value) : sSel.value;
+        if (!serverId) { toast('Select a server', 'error'); return; }
         const body = {
           install_mode: mode.value,
           cert_path: inputs.cert_path.value.trim(),
@@ -1244,11 +1256,65 @@
           fullchain_path: inputs.fullchain_path.value.trim(),
         };
         if (restart.value.trim()) {
-          try { body.restart_override = JSON.parse(restart.value); } catch (e) { toast('Restart override is not valid JSON', 'error'); return; }
+          try { body.restart_override = JSON.parse(restart.value); }
+          catch (e) { toast('Restart override is not valid JSON', 'error'); return; }
+        } else {
+          body.restart_override = null;
         }
-        if (await act(form.querySelector('button[type=submit]'), () => api('PUT', base + '/servers/' + sSel.value, body), 'Assignment saved')) reload();
+        if (opts.onSave) {
+          await opts.onSave(form.querySelector('button[type=submit]'), serverId, body);
+        }
       });
-      const rows = (assigns || []).map((a) => {
+      return h('div', {class: 'editor-panel'},
+        h('div', {class: 'card-head'}, h('h3', null, opts.title || 'Assignment')),
+        form);
+    }
+
+    async function assignSection() {
+      const [assigns, srv] = await Promise.all([api('GET', base + '/servers'), serversById()]);
+      const assigned = assigns || [];
+      const assignedIds = new Set(assigned.map((a) => a.server_id));
+      const editorHost = h('div', null);
+
+      function closeEditor() { editorHost.replaceChildren(); }
+
+      function openAdd() {
+        const available = srv.list
+          .filter((s) => !assignedIds.has(s.id))
+          .map((s) => ({id: s.id, label: serverLabel(s)}));
+        if (!available.length) {
+          toast('All servers are already assigned to this domain', 'error');
+          return;
+        }
+        editorHost.replaceChildren(domainServerEditor({
+          title: 'Add server',
+          submitLabel: 'Add assignment',
+          servers: available,
+          onCancel: closeEditor,
+          onSave: async (btn, serverId, body) => {
+            if (await act(btn, () => api('PUT', base + '/servers/' + serverId, body), 'Assignment saved')) reload();
+          },
+        }));
+        editorHost.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+      }
+
+      function openEdit(a) {
+        const s = srv.map.get(a.server_id);
+        editorHost.replaceChildren(domainServerEditor({
+          title: 'Edit assignment',
+          submitLabel: 'Save changes',
+          locked: true,
+          servers: [{id: a.server_id, label: s ? serverLabel(s) : a.server_id}],
+          initial: a,
+          onCancel: closeEditor,
+          onSave: async (btn, serverId, body) => {
+            if (await act(btn, () => api('PUT', base + '/servers/' + serverId, body), 'Assignment saved')) reload();
+          },
+        }));
+        editorHost.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+      }
+
+      const rows = assigned.map((a) => {
         const s = srv.map.get(a.server_id);
         return [
           link('/servers/' + a.server_id, s ? serverLabel(s) : a.server_id),
@@ -1257,22 +1323,18 @@
           a.chain_path || muted('default'), a.fullchain_path || muted('default'),
           a.restart_override ? code(JSON.stringify(a.restart_override)) : muted('none'),
           btns(
-            button('Edit', () => {
-              sSel.value = a.server_id; mode.value = a.install_mode || '';
-              inputs.cert_path.value = a.cert_path || ''; inputs.key_path.value = a.key_path || '';
-              inputs.chain_path.value = a.chain_path || ''; inputs.fullchain_path.value = a.fullchain_path || '';
-              restart.value = a.restart_override ? json(a.restart_override) : '';
-              form.scrollIntoView({behavior: 'smooth'});
-            }),
+            button('Edit', () => openEdit(a)),
             button('Remove', async (b) => {
               if (!confirm('Stop deploying this domain to this server?')) return;
               if (await act(b, () => api('DELETE', base + '/servers/' + a.server_id), 'Assignment removed')) reload();
             }, 'danger')),
         ];
       });
+
       return section('Servers & paths',
+        h('div', {class: 'toolbar'}, button('Add server', openAdd, 'primary')),
         table(['Server', 'Mode', 'Cert', 'Key', 'Chain', 'Fullchain', 'Restart override', ''], rows, 'Not assigned to any server.'),
-        h('h3', null, 'Assign / update'), form);
+        editorHost);
     }
 
     await reload();
@@ -1402,9 +1464,10 @@
   pages.server = async function (root) {
     const base = '/servers/' + ID;
     const tabParam = () => new URLSearchParams(location.search).get('tab') || 'server';
-    const parts = {server: slot(), endpoints: slot(), local: slot(), schedule: slot()};
+    const parts = {server: slot(), domains: slot(), endpoints: slot(), local: slot(), schedule: slot()};
     root.replaceChildren(tabbedCard([
       {id: 'server', label: 'Server', body: parts.server},
+      {id: 'domains', label: 'Domains', body: parts.domains},
       {id: 'endpoints', label: 'Endpoints', body: parts.endpoints},
       {id: 'local', label: 'Agent local config', body: parts.local},
       {id: 'schedule', label: 'Schedule configuration', body: parts.schedule},
@@ -1416,10 +1479,77 @@
     }));
     const reload = () => Promise.all([
       loadInto(parts.server, infoSection),
+      loadInto(parts.domains, domainsSection),
       loadInto(parts.endpoints, endpointsSection),
       loadInto(parts.local, localConfigSection),
       loadInto(parts.schedule, configSection),
     ]);
+
+    async function domainsSection() {
+      const [s, domains] = await Promise.all([api('GET', base), api('GET', '/domains')]);
+      const allDomains = domains || [];
+      const dmap = new Map(allDomains.map((d) => [d.id, d]));
+      const current = new Set(s.domain_ids || []);
+      const assigns = [];
+      await Promise.all([...current].map(async (did) => {
+        try {
+          const list = (await api('GET', '/domains/' + did + '/servers')) || [];
+          const hit = list.find((a) => a.server_id === ID);
+          if (hit) assigns.push(Object.assign({domain_id: did}, hit));
+        } catch (e) { /* ignore unreadable domain */ }
+      }));
+      const assignByDomain = new Map(assigns.map((a) => [a.domain_id, a]));
+
+      const mappedRows = [...current].map((did) => {
+        const d = dmap.get(did);
+        const a = assignByDomain.get(did) || {};
+        return [
+          d ? link('/domains/' + did, d.fqdn) : code(did.slice(0, 8)),
+          a.install_mode || muted('default'),
+          a.cert_path || muted('default'),
+          a.key_path || muted('default'),
+          a.fullchain_path || muted('default'),
+          d ? link('/domains/' + did, 'Edit paths →') : '',
+        ];
+      });
+
+      const boxes = allDomains.map((d) => ({
+        id: d.id,
+        el: checkbox('domain_map', d.fqdn, current.has(d.id), d.id),
+      }));
+      const apply = button('Apply mapping', async (b) => {
+        const selected = new Set(boxes.filter((x) => x.el.querySelector('input').checked).map((x) => x.id));
+        const add = [...selected].filter((id) => !current.has(id));
+        const remove = [...current].filter((id) => !selected.has(id));
+        if (!add.length && !remove.length) {
+          toast('No mapping changes', 'ok');
+          return;
+        }
+        const labelOf = (id) => (dmap.has(id) ? dmap.get(id).fqdn : id.slice(0, 8));
+        const lines = [];
+        if (add.length) lines.push('Add:\n' + add.map((id) => '  • ' + labelOf(id)).join('\n'));
+        if (remove.length) lines.push('Remove:\n' + remove.map((id) => '  • ' + labelOf(id)).join('\n'));
+        if (!confirm('Apply domain mapping changes on this server?\n\n' + lines.join('\n\n'))) return;
+        if (await act(b, async () => {
+          for (const id of add) {
+            await api('PUT', '/domains/' + id + '/servers/' + ID, {});
+          }
+          for (const id of remove) {
+            await api('DELETE', '/domains/' + id + '/servers/' + ID);
+          }
+        }, 'Domain mapping updated')) reload();
+      }, 'primary');
+
+      return h('div', null,
+        h('p', {class: 'muted'},
+          'Domains deployed to this server. Path and install overrides are edited on the domain page; here you map or unmap domains.'),
+        table(['Domain', 'Mode', 'Cert', 'Key', 'Fullchain', ''], mappedRows, 'No domains mapped to this server.'),
+        h('h3', null, 'Map domains'),
+        h('div', {class: 'checks domain-map'},
+          boxes.length ? boxes.map((x) => x.el) : muted('No domains available.')),
+        h('p', {class: 'help'}, 'Check domains to deploy here, uncheck to remove. Apply asks for confirmation. New mappings use agent defaults until you edit paths on the domain.'),
+        h('p', null, apply));
+    }
 
     async function endpointsSection() {
       const [eps, domains] = await Promise.all([api('GET', '/monitor/endpoints'), api('GET', '/domains')]);
