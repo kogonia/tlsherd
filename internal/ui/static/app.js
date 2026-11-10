@@ -2119,17 +2119,21 @@
       const vs = (await api('GET', base + '/versions')) || [];
       const rows = vs.map((v) => {
         const c = v.certificate || {};
+        const fp = c.fingerprint_sha256 || '';
+        const dl = (part) => h('a', {href: API + '/certificates/' + fp + '/' + part}, part);
         return [
           'v' + v.version,
           v.is_current ? badge('current', 'ok') : '',
-          code(shortFp(c.fingerprint_sha256 || '')),
+          h('span', {title: fp}, code(shortFp(fp))),
           c.subject_cn || '',
           expiryBadge(c.not_after),
-          fmt(v.activated_at),
-          v.reason || '',
+          h('div', {class: 'small'}, fmt(v.activated_at), v.reason ? h('div', {class: 'muted'}, v.reason) : null),
+          h('div', {class: 'small'}, dl('cert'), ' · ', dl('chain'), ' · ', dl('key')),
         ];
       });
-      return section('Versions', table(['Version', '', 'Fingerprint', 'Subject', 'Expires', 'Activated', 'Reason'], rows, 'No certificate uploaded yet.'));
+      return section('Versions',
+        table(['Version', '', 'Fingerprint', 'Subject', 'Expires', 'Activated', 'Download'], rows, 'No certificate uploaded yet.'),
+        h('p', {class: 'help'}, 'Key download is administrators only. CA / allowed client entries may have no key file.'));
     }
 
     async function assignSection() {
