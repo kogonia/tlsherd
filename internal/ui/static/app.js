@@ -2056,7 +2056,7 @@
     (function () {
       const needsKey = true; // UI always shows key; server enforces by kind
       const form = h('form', null,
-        h('div', {class: 'row'},
+        h('div', {class: 'row row-top'},
           field('Certificate (PEM)', h('input', {type: 'file', name: 'cert', required: true, accept: '.pem,.crt,.cer'})),
           field('Private key (PEM)', h('input', {type: 'file', name: 'key', accept: '.pem,.key'}), 'Required for mtls_client; omit for CA / allowed client.'),
           field('Chain (PEM, optional)', h('input', {type: 'file', name: 'chain', accept: '.pem,.crt,.cer'}))),
