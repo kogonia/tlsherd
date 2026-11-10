@@ -366,7 +366,11 @@ func (s *Services) ReportApplyResult(ctx context.Context, srv *domain.Server, in
 			entity += ":" + dom.ID.String()
 		}
 		if managed != nil {
-			evDomID = managed.DomainID
+			if ids, lerr := tx.ListManagedCertDomainIDs(ctx, managed.ID); lerr != nil {
+				return lerr
+			} else if len(ids) > 0 {
+				evDomID = &ids[0]
+			}
 			entity += ":managed:" + managed.ID.String()
 		}
 		if err := tx.SaveApplyResult(ctx, in.ApplyID, srv.ID, domID, in.Status, in.Message, details); err != nil {

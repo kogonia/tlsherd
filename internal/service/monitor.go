@@ -185,7 +185,7 @@ func (s *Services) validateClientCert(ctx context.Context, st store.Store, actor
 	if mc.Kind != domain.ManagedKindMTLSClient {
 		return invalidf("client certificate must be an mtls_client managed certificate")
 	}
-	if err := s.requireManagedRead(ctx, actor, mc); err != nil {
+	if err := s.requireManagedRead(ctx, st, actor, mc); err != nil {
 		return err
 	}
 	mv, err := st.GetCurrentManagedCertificateVersion(ctx, id)

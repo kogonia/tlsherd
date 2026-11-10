@@ -491,10 +491,18 @@ func (s *Services) certVisible(ctx context.Context, actor *domain.User, certID u
 		return false, err
 	}
 	for _, mc := range mcs {
-		if mc.DomainID == nil {
-			continue
+		domIDs, err := s.Store.ListManagedCertDomainIDs(ctx, mc.ID)
+		if err != nil {
+			return false, err
 		}
-		if _, ok := visible[*mc.DomainID]; !ok {
+		linked := false
+		for _, did := range domIDs {
+			if _, ok := visible[did]; ok {
+				linked = true
+				break
+			}
+		}
+		if !linked {
 			continue
 		}
 		mvs, err := s.Store.ListManagedCertificateVersions(ctx, mc.ID)

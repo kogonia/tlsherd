@@ -1989,13 +1989,15 @@
             link('/managed-certificates/' + m.id, m.display_name || m.name),
             code(m.name),
             badge(managedKindLabel(m.kind), m.kind === 'mtls_client' ? 'info' : ''),
-            m.domain_fqdn ? link('/domains/' + m.domain_id, m.domain_fqdn) : muted('—'),
+            (m.domains && m.domains.length)
+              ? h('div', null, m.domains.map((d, i) => [i ? ', ' : null, link('/domains/' + d.id, d.fqdn)]))
+              : muted('—'),
             c ? expiryBadge(c.not_after) : muted('no cert'),
             m.has_key ? badge('key', 'ok') : muted('no key'),
             String((m.server_ids || []).length),
           ];
         });
-        return table(['Certificate', 'Slug', 'Kind', 'Domain', 'Expires', 'Key', 'Servers'], rows, 'No managed certificates yet.');
+        return table(['Certificate', 'Slug', 'Kind', 'Domains', 'Expires', 'Key', 'Servers'], rows, 'No managed certificates yet.');
       });
     }
 
@@ -2028,8 +2030,7 @@
       const display = input('display_name', m.display_name || '');
       const notes = h('textarea', {name: 'notes', rows: 2}, '');
       notes.value = m.notes || '';
-      const domainOpts = [['', '— none —']].concat((domains || []).map((d) => [d.id, d.fqdn]));
-      const domainSel = select('domain_id', domainOpts, m.domain_id || '');
+      const picker = groupPicker((domains || []).map((d) => ({id: d.id, name: d.fqdn})), m.domain_ids || []);
       const info = h('dl', {class: 'kv'},
         h('dt', null, 'Slug'), h('dd', null, code(m.name)),
         h('dt', null, 'Kind'), h('dd', null, badge(managedKindLabel(m.kind), m.kind === 'mtls_client' ? 'info' : '')),
@@ -2038,9 +2039,11 @@
         c ? [h('dt', null, 'Subject'), h('dd', null, c.subject_cn || '—'),
           h('dt', null, 'Issuer'), h('dd', null, c.issuer_cn || '—')] : null);
       const save = button('Save', async (b) => {
-        const body = {display_name: display.value, notes: notes.value};
-        if (domainSel.value) body.domain_id = domainSel.value;
-        else body.domain_id = null;
+        const body = {
+          display_name: display.value,
+          notes: notes.value,
+          domain_ids: picker.values(),
+        };
         if (await act(b, () => api('PATCH', base, body), 'Saved')) reload();
       }, 'primary');
       const del = button('Delete', async (b) => {
@@ -2048,7 +2051,10 @@
         if (await act(b, () => api('DELETE', base), 'Deleted')) location.href = '/managed-certificates';
       }, 'danger');
       return section(m.display_name || m.name, info,
-        h('div', {class: 'row'}, field('Display name', display), field('Linked domain', domainSel)),
+        field('Display name', display),
+        h('h3', null, 'Linked domains'),
+        h('p', {class: 'help'}, 'A CA may cover many FQDNs (e.g. a.domain.com and b.domain.com). Leaf uploads are checked against linked CAs.'),
+        picker.node,
         field('Notes', notes),
         h('p', null, btns(save, del)));
     }

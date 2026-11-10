@@ -242,13 +242,21 @@ func (s *Services) ScanManagedCertificates(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("scan managed certificates: %w", err)
 		}
+		domIDs, err := s.Store.ListManagedCertDomainIDs(ctx, mc.ID)
+		if err != nil {
+			return fmt.Errorf("scan managed certificates: %w", err)
+		}
+		var evDomain *uuid.UUID
+		if len(domIDs) > 0 {
+			evDomain = &domIDs[0]
+		}
 		label := fmt.Sprintf("managed certificate %s (%s)", mc.Name, mc.Kind)
 		if err := s.syncExpiryEvents(ctx, expiryTarget{
 			Entity: "managed:" + mc.ID.String(), Label: label, NotAfter: c.NotAfter,
-			DomainID: mc.DomainID, CertID: &c.ID,
+			DomainID: evDomain, CertID: &c.ID,
 			Details: map[string]any{
 				"managed_cert_id": mc.ID, "name": mc.Name, "kind": mc.Kind,
-				"fingerprint": c.FingerprintSHA256,
+				"fingerprint": c.FingerprintSHA256, "domain_ids": domIDs,
 			},
 		}, set, now); err != nil {
 			return err

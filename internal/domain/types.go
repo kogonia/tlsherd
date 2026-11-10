@@ -227,15 +227,15 @@ const (
 )
 
 // ManagedCertificate is inventory for CA / inbound client pins / our outbound mTLS client certs.
+// Domain links live in managed_cert_domains (many-to-many); see ManagedCertView.DomainIDs.
 type ManagedCertificate struct {
-	ID          uuid.UUID  `json:"id"`
-	Name        string     `json:"name"`
-	DisplayName string     `json:"display_name"`
-	Kind        string     `json:"kind"`
-	DomainID    *uuid.UUID `json:"domain_id,omitempty"`
-	Notes       string     `json:"notes"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID          uuid.UUID `json:"id"`
+	Name        string    `json:"name"`
+	DisplayName string    `json:"display_name"`
+	Kind        string    `json:"kind"`
+	Notes       string    `json:"notes"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // ManagedCertificateVersion versions a managed certificate (mirrors DomainCertificate).

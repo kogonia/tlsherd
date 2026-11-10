@@ -11,11 +11,11 @@ import (
 
 // Managed certificates
 
-const managedCertCols = `id, name, display_name, kind, domain_id, notes, created_at, updated_at`
+const managedCertCols = `id, name, display_name, kind, notes, created_at, updated_at`
 
 func scanManagedCertificate(r rowScanner) (domain.ManagedCertificate, error) {
 	var m domain.ManagedCertificate
-	err := r.Scan(&m.ID, &m.Name, &m.DisplayName, &m.Kind, &m.DomainID, &m.Notes,
+	err := r.Scan(&m.ID, &m.Name, &m.DisplayName, &m.Kind, &m.Notes,
 		&m.CreatedAt, &m.UpdatedAt)
 	return m, err
 }
@@ -23,10 +23,10 @@ func scanManagedCertificate(r rowScanner) (domain.ManagedCertificate, error) {
 func (s *Store) CreateManagedCertificate(ctx context.Context, m *domain.ManagedCertificate) error {
 	m.ID = newID(m.ID)
 	err := s.q.QueryRow(ctx, `
-		INSERT INTO managed_certificates (id, name, display_name, kind, domain_id, notes)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO managed_certificates (id, name, display_name, kind, notes)
+		VALUES ($1, $2, $3, $4, $5)
 		RETURNING created_at, updated_at`,
-		m.ID, m.Name, m.DisplayName, m.Kind, m.DomainID, m.Notes,
+		m.ID, m.Name, m.DisplayName, m.Kind, m.Notes,
 	).Scan(&m.CreatedAt, &m.UpdatedAt)
 	return mapErr("create managed certificate", err)
 }
@@ -42,24 +42,26 @@ func (s *Store) GetManagedCertificateByName(ctx context.Context, name string) (*
 }
 
 // ListManagedCertificates lists managed certificates ordered by name; empty
-// filter fields match everything.
+// filter fields match everything. DomainID matches via managed_cert_domains.
 func (s *Store) ListManagedCertificates(ctx context.Context, f store.ManagedCertFilter) ([]domain.ManagedCertificate, error) {
 	return queryAll(ctx, s.q, "list managed certificates", scanManagedCertificate, `
-		SELECT `+managedCertCols+` FROM managed_certificates
-		WHERE ($1::text = '' OR kind = $1)
-		  AND ($2::uuid IS NULL OR domain_id = $2)
-		ORDER BY name`, f.Kind, f.DomainID)
+		SELECT `+managedCertCols+` FROM managed_certificates m
+		WHERE ($1::text = '' OR m.kind = $1)
+		  AND ($2::uuid IS NULL OR EXISTS (
+		        SELECT 1 FROM managed_cert_domains d
+		        WHERE d.managed_cert_id = m.id AND d.domain_id = $2))
+		ORDER BY m.name`, f.Kind, f.DomainID)
 }
 
-// UpdateManagedCertificate updates mutable metadata (display name, domain link, notes).
-// Name and kind are immutable. On return m carries updated_at.
+// UpdateManagedCertificate updates mutable metadata (display name, notes).
+// Name and kind are immutable. Domain links use SetManagedCertDomains.
 func (s *Store) UpdateManagedCertificate(ctx context.Context, m *domain.ManagedCertificate) error {
 	err := s.q.QueryRow(ctx, `
 		UPDATE managed_certificates
-		SET display_name = $2, domain_id = $3, notes = $4, updated_at = now()
+		SET display_name = $2, notes = $3, updated_at = now()
 		WHERE id = $1
 		RETURNING updated_at`,
-		m.ID, m.DisplayName, m.DomainID, m.Notes,
+		m.ID, m.DisplayName, m.Notes,
 	).Scan(&m.UpdatedAt)
 	return mapErr("update managed certificate", err)
 }
@@ -67,6 +69,28 @@ func (s *Store) UpdateManagedCertificate(ctx context.Context, m *domain.ManagedC
 func (s *Store) DeleteManagedCertificate(ctx context.Context, id uuid.UUID) error {
 	return execOne(ctx, s.q, "delete managed certificate",
 		`DELETE FROM managed_certificates WHERE id = $1`, id)
+}
+
+func (s *Store) ListManagedCertDomainIDs(ctx context.Context, managedCertID uuid.UUID) ([]uuid.UUID, error) {
+	return queryAll(ctx, s.q, "list managed cert domains", scanUUID, `
+		SELECT domain_id FROM managed_cert_domains
+		WHERE managed_cert_id = $1
+		ORDER BY domain_id`, managedCertID)
+}
+
+// SetManagedCertDomains replaces domain links for the managed certificate.
+func (s *Store) SetManagedCertDomains(ctx context.Context, managedCertID uuid.UUID, domainIDs []uuid.UUID) error {
+	if _, err := s.q.Exec(ctx, `DELETE FROM managed_cert_domains WHERE managed_cert_id = $1`, managedCertID); err != nil {
+		return mapErr("clear managed cert domains", err)
+	}
+	for _, did := range domainIDs {
+		if _, err := s.q.Exec(ctx, `
+			INSERT INTO managed_cert_domains (managed_cert_id, domain_id)
+			VALUES ($1, $2)`, managedCertID, did); err != nil {
+			return mapErr("link managed cert domain", err)
+		}
+	}
+	return nil
 }
 
 // Managed certificate versions

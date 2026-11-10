@@ -82,9 +82,13 @@ type Store interface {
 	GetManagedCertificateByName(ctx context.Context, name string) (*domain.ManagedCertificate, error)
 	ListManagedCertificates(ctx context.Context, filter ManagedCertFilter) ([]domain.ManagedCertificate, error)
 	UpdateManagedCertificate(ctx context.Context, m *domain.ManagedCertificate) error
-	// DeleteManagedCertificate removes the managed certificate with its versions and
-	// server assignments; underlying certificates rows are left for the caller to prune.
+	// DeleteManagedCertificate removes the managed certificate with its versions,
+	// domain links, and server assignments; underlying certificates rows are left
+	// for the caller to prune.
 	DeleteManagedCertificate(ctx context.Context, id uuid.UUID) error
+	ListManagedCertDomainIDs(ctx context.Context, managedCertID uuid.UUID) ([]uuid.UUID, error)
+	// SetManagedCertDomains replaces the domain links of a managed certificate.
+	SetManagedCertDomains(ctx context.Context, managedCertID uuid.UUID, domainIDs []uuid.UUID) error
 	// ActivateManagedCertificateVersion makes mv current (see ActivateDomainCertificate).
 	ActivateManagedCertificateVersion(ctx context.Context, mv *domain.ManagedCertificateVersion) error
 	ListManagedCertificateVersions(ctx context.Context, managedCertID uuid.UUID) ([]domain.ManagedCertificateVersion, error)

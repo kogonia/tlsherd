@@ -26,11 +26,11 @@ func (h *Handler) listManagedCerts(w http.ResponseWriter, r *http.Request, u *do
 }
 
 type createManagedCertRequest struct {
-	Name        string     `json:"name"`
-	DisplayName string     `json:"display_name"`
-	Kind        string     `json:"kind"`
-	DomainID    *uuid.UUID `json:"domain_id"`
-	Notes       string     `json:"notes"`
+	Name        string      `json:"name"`
+	DisplayName string      `json:"display_name"`
+	Kind        string      `json:"kind"`
+	DomainIDs   []uuid.UUID `json:"domain_ids"`
+	Notes       string      `json:"notes"`
 }
 
 func (h *Handler) createManagedCert(w http.ResponseWriter, r *http.Request, u *domain.User) {
@@ -62,8 +62,8 @@ func (h *Handler) getManagedCert(w http.ResponseWriter, r *http.Request, u *doma
 type patchManagedCertRequest struct {
 	DisplayName *string `json:"display_name"`
 	Notes       *string `json:"notes"`
-	// DomainID is a raw value so that an explicit null detaches the domain.
-	DomainID json.RawMessage `json:"domain_id"`
+	// DomainIDs replaces the full link set when present (including []).
+	DomainIDs json.RawMessage `json:"domain_ids"`
 }
 
 func (h *Handler) updateManagedCert(w http.ResponseWriter, r *http.Request, u *domain.User) {
@@ -76,12 +76,20 @@ func (h *Handler) updateManagedCert(w http.ResponseWriter, r *http.Request, u *d
 		return
 	}
 	patch := service.ManagedCertPatch{DisplayName: req.DisplayName, Notes: req.Notes}
-	if len(req.DomainID) > 0 {
-		if string(req.DomainID) == "null" {
-			patch.ClearDomain = true
-		} else if err := json.Unmarshal(req.DomainID, &patch.DomainID); err != nil {
-			h.badRequest(w, "invalid domain_id")
-			return
+	if len(req.DomainIDs) > 0 {
+		if string(req.DomainIDs) == "null" {
+			empty := []uuid.UUID{}
+			patch.DomainIDs = &empty
+		} else {
+			var ids []uuid.UUID
+			if err := json.Unmarshal(req.DomainIDs, &ids); err != nil {
+				h.badRequest(w, "invalid domain_ids")
+				return
+			}
+			if ids == nil {
+				ids = []uuid.UUID{}
+			}
+			patch.DomainIDs = &ids
 		}
 	}
 	out, err := h.svc.UpdateManagedCertificate(r.Context(), u, id, patch)

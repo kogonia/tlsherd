@@ -186,14 +186,21 @@ CREATE TABLE managed_certificates (
     display_name    text NOT NULL DEFAULT '',
     kind            text NOT NULL
                     CHECK (kind IN ('ca', 'allowed_client', 'mtls_client')),
-    domain_id       uuid REFERENCES domains(id) ON DELETE SET NULL,
     notes           text NOT NULL DEFAULT '',
     created_at      timestamptz NOT NULL DEFAULT now(),
     updated_at      timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE INDEX managed_certificates_domain_idx ON managed_certificates(domain_id);
 CREATE INDEX managed_certificates_kind_idx ON managed_certificates(kind);
+
+-- One managed cert (e.g. a shared CA) may link to many domains.
+CREATE TABLE managed_cert_domains (
+    managed_cert_id uuid NOT NULL REFERENCES managed_certificates(id) ON DELETE CASCADE,
+    domain_id       uuid NOT NULL REFERENCES domains(id) ON DELETE CASCADE,
+    PRIMARY KEY (managed_cert_id, domain_id)
+);
+
+CREATE INDEX managed_cert_domains_domain_idx ON managed_cert_domains(domain_id);
 
 CREATE TABLE managed_certificate_versions (
     id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
