@@ -483,8 +483,8 @@
 
   const CFG_FIELDS = [
     {group: 'Polling', fields: [
-      {p: 'enroll_interval', l: 'Enroll interval', t: 'text', help: 'Go duration, e.g. 1m. Used only while the agent has no API key (pending/rejected): retry POST /agent/enroll.'},
-      {p: 'poll_interval', l: 'Poll interval', t: 'text', help: 'Go duration, e.g. 12h. Used after acceptance: how often the agent pulls config and certificates via POST /agent/poll.'},
+      {p: 'enroll_interval', l: 'Enroll interval', t: 'text', help: 'Time duration, e.g. 1m. Used only while the agent has no API key (pending/rejected): retry POST /agent/enroll.'},
+      {p: 'poll_interval', l: 'Poll interval', t: 'text', help: 'Time duration, e.g. 12h. Used after acceptance: how often the agent pulls config and certificates via POST /agent/poll.'},
       {p: 'jitter', l: 'Jitter', t: 'number', help: 'Fraction 0..1 added to intervals.'},
     ]},
     {group: 'Maintenance window', fields: [

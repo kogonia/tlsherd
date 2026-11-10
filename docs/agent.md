@@ -133,7 +133,7 @@ prefixes `docker exec <name>` at runtime.
 | Field | Meaning |
 | --- | --- |
 | `command` | Argv list (**no shell**). Empty = skip |
-| `timeout` | Go duration, e.g. `"30s"` |
+| `timeout` | Time duration, e.g. `"30s"` |
 
 On failure the agent **restores the previous files** and does **not** restart.
 
