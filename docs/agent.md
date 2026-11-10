@@ -71,7 +71,7 @@ tlsherd-agent -s https://tlsherd.example.com:8444 -d /cert -a /var/lib/tlsherd-a
 
 | Layer | File | Owns | Who wins |
 | --- | --- | --- | --- |
-| **Local** | `agent.local.cfg` | Web service, pre-start (`verify`), start method (`restart`), install & paths | Agent / host (server UI can push) |
+| **Local** | `agent.local.cfg` | Web service, pre-start (`verify`), start method (`restart`), install & paths | Agent / host (server UI can queue an update; agent pulls) |
 | **Schedule** | `config.cfg` | Poll/enroll intervals, maintenance window, backups, `post_check`, `strict_cert_check` | Server (defaults or per-server doc) |
 
 Apply merge order:
@@ -85,8 +85,10 @@ Apply merge order:
 ## Local config (`agent.local.cfg`)
 
 JSON on the agent host. Reported to the server on enroll/poll. **Servers → Agent
-local config → Save & push** queues an update; on the next poll the agent rotates
-the active file to `.prev` and writes the new document, then reloads in-process.
+local config → Save for agent pull** queues an update on the server; the agent
+**pulls** it on its next enroll/poll, rotates the active file to `.prev`, writes
+the new document, then reloads in-process. The server never opens a connection to
+the agent.
 
 If the active file is missing/corrupt, the agent loads `.prev` (WARN) or empty
 `custom` defaults.
@@ -311,8 +313,8 @@ Local config does **not** own these fields:
 
 | Field | Meaning | Typical default |
 | --- | --- | --- |
-| `enroll_interval` | How often a not-yet-accepted agent retries enroll | `1m` |
-| `poll_interval` | How often an accepted agent polls | `12h` |
+| `enroll_interval` | Sleep between `POST /agent/enroll` while the agent has **no API key** (pending/rejected/never accepted) | `1m` |
+| `poll_interval` | Sleep between `POST /agent/poll` once the agent **has an API key** (pulls schedule, local-config updates, certs) | `12h` |
 | `jitter` | ± fraction applied to intervals (`0`–`1`) | `0.1` |
 | `maintenance_window` | `tz`, `days` (1=Mon…7=Sun), `from`/`to` (`HH:MM`; equal = all day) | UTC all day |
 | `urgent_threshold` | Apply outside the window if installed cert expires sooner | `72h` |
@@ -355,8 +357,8 @@ step — distinct from a future in-process post-start command, if added later.
 ## Security notes
 
 The agent runs pre-start and restart commands **as the unit user** (typically root).
-Anyone who can edit `agent.local.cfg` (on the host or via the server UI push) can
-run arbitrary argv on that host. Commands are argv lists, never a shell; certificate
-paths stay under the cert root.
+Anyone who can edit `agent.local.cfg` (on the host or by queuing an update in the
+server UI that the agent later pulls) can run arbitrary argv on that host. Commands
+are argv lists, never a shell; certificate paths stay under the cert root.
 
 See the [threat model](../README.md#threat-model) in the main README.

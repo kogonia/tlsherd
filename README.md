@@ -59,8 +59,9 @@ Layers (`handler → service → store`, no reverse dependencies):
   overlap) or revoke. IP/key mismatch is blocked and queued for review.
 - **Two agent config layers.** (1) **Local** `agent.local.cfg` — web service, pre-start
   validation, start method (`systemd` / `docker` / `exec`), install paths (agent
-  priority; server UI can push). (2) **Schedule** `config.cfg` — poll/window/backups/
-  post-check (server-authoritative). Details and examples: [Agent guide](docs/agent.md).
+  priority; server UI can queue an update that the agent pulls). (2) **Schedule**
+  `config.cfg` — poll/window/backups/post-check (server-authoritative). Details:
+  [Agent guide](docs/agent.md).
 - **Certificates.** Leaf or fullchain PEM; key must match. Immutable versions + rollback.
   Files under `<data_dir>/certs/<sha256>/` and `<data_dir>/domains/<fqdn>/current`.
 - **Monitor.** Probes endpoints; events for down / expiry / fingerprint mismatch.
@@ -81,7 +82,7 @@ and the PostgreSQL database.
 
 **The agent runs commands as root** (unit user). Host-local `agent.local.cfg` owns
 web service, pre-start validation, start method, and paths. Anyone who can edit that
-file (on the host or via the server UI push) has **root on that host**. Schedule
+file (on the host or via a queued server-side update the agent pulls) has **root on that host**. Schedule
 settings remain server-authoritative in `config.cfg`. Domain `restart_override` is a
 last-resort per-domain overlay.
 

@@ -483,8 +483,8 @@
 
   const CFG_FIELDS = [
     {group: 'Polling', fields: [
-      {p: 'enroll_interval', l: 'Enroll interval', t: 'text', help: 'Go duration, e.g. 1m. How often a not-yet-accepted agent retries.'},
-      {p: 'poll_interval', l: 'Poll interval', t: 'text', help: 'Go duration, e.g. 12h.'},
+      {p: 'enroll_interval', l: 'Enroll interval', t: 'text', help: 'Go duration, e.g. 1m. Used only while the agent has no API key (pending/rejected): retry POST /agent/enroll.'},
+      {p: 'poll_interval', l: 'Poll interval', t: 'text', help: 'Go duration, e.g. 12h. Used after acceptance: how often the agent pulls config and certificates via POST /agent/poll.'},
       {p: 'jitter', l: 'Jitter', t: 'number', help: 'Fraction 0..1 added to intervals.'},
     ]},
     {group: 'Maintenance window', fields: [
@@ -1303,11 +1303,11 @@
       const banners = [];
       if (view.conflict) {
         banners.push(h('div', {class: 'banner bad'},
-          'Local config push conflict: the agent file changed since this edit. Re-save after reviewing the reported config.'));
+          'Local config conflict: the agent file changed since this edit. Re-save after reviewing the reported config.'));
       } else if (view.pending) {
         banners.push(h('div', {class: 'banner warn'},
-          'Pending push revision ' + view.pending_revision + ' (base ' + shortFp(view.pending_base_hash || '') +
-          '). The agent applies it on the next poll and keeps one previous file as agent.local.cfg.prev.'));
+          'Pending update revision ' + view.pending_revision + ' (base ' + shortFp(view.pending_base_hash || '') +
+          '). The agent will pull it on its next enroll/poll and keep one previous file as agent.local.cfg.prev.'));
       }
       if (view.reported) {
         banners.push(h('p', null, 'Reported service ', badge(view.reported.service || 'custom', 'info'),
@@ -1507,23 +1507,23 @@
         };
       }
 
-      const save = button('Save & push to agent', async (b) => {
-        if (!confirmBox.checked) { toast('Confirm the local config push first.', 'error'); return; }
+      const save = button('Save for agent pull', async (b) => {
+        if (!confirmBox.checked) { toast('Confirm saving the local config first.', 'error'); return; }
         const body = {config: readLocal(), confirm: true};
-        if (await act(b, () => api('PUT', base + '/local-config', body), 'Local config queued for agent')) reload();
+        if (await act(b, () => api('PUT', base + '/local-config', body), 'Queued; agent pulls on next enroll/poll')) reload();
       }, 'primary');
       const resetAll = button('Reset to web × start-method defaults', async (b) => {
         if (!confirmBox.checked) { toast('Confirm first.', 'error'); return; }
         if (!confirm('Reset pre-start and restart for ' + svcSel.value + ' + ' + deploySel.value + '?')) return;
         applyPreset({keepName: true});
         const body = {config: readLocal(), confirm: true};
-        if (await act(b, () => api('PUT', base + '/local-config', body), 'Defaults queued')) reload();
+        if (await act(b, () => api('PUT', base + '/local-config', body), 'Queued; agent pulls on next enroll/poll')) reload();
       });
 
       return h('div', null,
         ...banners,
         h('div', {class: 'banner warn'},
-          'Agent-priority settings on the host ($TLSHERD_AGENT_DIR/agent.local.cfg, default /var/lib/tlsherd-agent/). Saving queues a push on the next poll; the agent keeps one previous version as .prev.'),
+          'Agent-priority settings on the host ($TLSHERD_AGENT_DIR/agent.local.cfg, default /var/lib/tlsherd-agent/). Saving queues an update here; the agent pulls it on its next enroll/poll and keeps one previous version as .prev. The server does not push to the agent.'),
         h('fieldset', null, h('legend', null, 'Service'),
           h('div', {class: 'row row-top'},
             field('Web service', svcSel, 'Software that serves TLS (fills verify/reload recipes).'),
@@ -1542,7 +1542,7 @@
           field('Extra publish paths', h('div', {class: 'row'}, certPath, keyPath, chainPath, fullchainPath),
             'Optional templates with {domain}. Must stay under cert_root. Use fullchain_path for nginx.'),
           h('label', {class: 'check'}, strictCert, 'Validate certificate before install/reload (overrides server schedule when set)')),
-        h('p', null, h('label', {class: 'check'}, confirmBox, 'I confirm pushing this local config to the agent host')),
+        h('p', null, h('label', {class: 'check'}, confirmBox, 'I confirm queuing this local config for the agent to pull')),
         h('p', null, btns(save, resetAll)));
     }
 
@@ -1587,12 +1587,12 @@
     const save = button('Save defaults', async (b) => {
       let cfg;
       try { cfg = form.read(); } catch (e) { toast(errMsg(e), 'error'); return; }
-      if (!confirm('Update the agent defaults? All servers without a custom config adopt them on their next poll.')) return;
+      if (!confirm('Update the agent defaults? Agents without a custom schedule will pull them on their next poll.')) return;
       if (await act(b, () => api('PUT', '/settings/agent-defaults', {config: cfg}), 'Defaults saved')) location.reload();
     }, 'primary');
     root.replaceChildren(section('Agent defaults',
       h('p', null, 'version ', d.config_version, ' · hash ', code(shortFp(d.config_hash)), ' · updated ', fmt(d.updated_at)),
-      h('p', {class: 'muted'}, 'Schedule defaults (poll/window/backups/post-check). Per-agent service verify/restart are edited on the server page under Agent local config.'),
+      h('p', {class: 'muted'}, 'Schedule defaults (poll/window/backups/post-check). Agents pull this document; the server does not push. Per-agent service verify/restart are under Servers → Agent local config.'),
       form.node, h('p', null, save)));
   };
 

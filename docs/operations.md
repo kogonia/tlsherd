@@ -55,9 +55,10 @@ In **Servers → Schedule configuration** use **Force from defaults** (with conf
 
 ### Bad local service config
 
-Edit **Servers → Agent local config** and push, or fix `$TLSHERD_AGENT_DIR/agent.local.cfg` on
-the host (default `/var/lib/tlsherd-agent/agent.local.cfg`). The previous push is
-`agent.local.cfg.prev` (copy it back over the active file and restart the agent).
+Edit **Servers → Agent local config** and save for the agent to pull, or fix
+`$TLSHERD_AGENT_DIR/agent.local.cfg` on the host (default `/var/lib/tlsherd-agent/agent.local.cfg`).
+The previous file is `agent.local.cfg.prev` (copy it back over the active file and
+restart the agent).
 
 ### Compromised agent key or host
 
