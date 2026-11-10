@@ -115,6 +115,7 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request, u *domain.U
 	out, err := h.svc.ListEventsWithNotify(r.Context(), u, service.ListEventsInput{
 		UnresolvedOnly: q.Get("unresolved") == "true" || q.Get("unresolved") == "1",
 		Type:           q.Get("type"),
+		Severity:       q.Get("severity"),
 		DomainID:       domainID,
 		ServerID:       serverID,
 		Limit:          intQuery(r, "limit", 100, 1000),
@@ -157,9 +158,13 @@ func (h *Handler) dismissEvent(w http.ResponseWriter, r *http.Request, u *domain
 }
 
 func (h *Handler) listAudit(w http.ResponseWriter, r *http.Request, u *domain.User) {
-	out, err := h.svc.ListAudit(r.Context(), u,
-		intQuery(r, "limit", 25, 1000),
-		intQuery(r, "offset", 0, 1_000_000))
+	q := r.URL.Query()
+	out, err := h.svc.ListAudit(r.Context(), u, service.ListAuditInput{
+		Actor:  q.Get("actor"),
+		Action: q.Get("action"),
+		Limit:  intQuery(r, "limit", 25, 1000),
+		Offset: intQuery(r, "offset", 0, 1_000_000),
+	})
 	if err != nil {
 		h.fail(w, r, err)
 		return

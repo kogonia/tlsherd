@@ -228,6 +228,19 @@ td button { padding: 2px 8px; font-size: 12.5px; }
 .badge.bad { background: var(--bad-bg); color: var(--bad); }
 .badge.info { background: var(--info-bg); color: var(--primary); }
 
+.live-search { position: relative; display: inline-block; vertical-align: middle; min-width: 160px; max-width: 280px; }
+.live-search.wide { max-width: 480px; width: 100%; }
+.live-search .live-search-input { width: 100%; margin-top: 0; }
+.live-search-list {
+  position: absolute; z-index: 20; left: 0; right: 0; max-height: 240px; overflow: auto;
+  background: var(--card); border: 1px solid var(--line); border-radius: 4px; box-shadow: 0 4px 12px var(--shadow);
+}
+.live-search-item {
+  display: block; width: 100%; text-align: left; border: 0; background: transparent;
+  padding: 6px 10px; border-radius: 0; font: inherit; color: var(--fg);
+}
+.live-search-item:hover, .live-search-item.active { background: var(--info-bg); }
+.toolbar .live-search { margin-right: 4px; }
 .tz-picker { position: relative; max-width: 480px; }
 .tz-picker .tz-input { margin-top: 3px; }
 .tz-list {

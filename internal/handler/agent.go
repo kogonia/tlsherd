@@ -11,10 +11,10 @@ import (
 )
 
 type enrollRequest struct {
-	ClientName      string               `json:"client_name"`
-	Version         string               `json:"version"`
+	ClientName      string                `json:"client_name"`
+	Version         string                `json:"version"`
 	LocalConfig     *agentcfg.LocalConfig `json:"local_config"`
-	LocalConfigHash string               `json:"local_config_hash"`
+	LocalConfigHash string                `json:"local_config_hash"`
 }
 
 // agentEnroll handles unauthenticated enrollment. An agent that already holds
@@ -29,12 +29,8 @@ func (h *Handler) agentEnroll(w http.ResponseWriter, r *http.Request) {
 	if !h.decodeJSON(w, r, &req, true) {
 		return
 	}
-	name := req.ClientName
-	if req.Version != "" {
-		name = strings.TrimSpace(name + " " + req.Version)
-	}
 	res, err := h.svc.Enroll(r.Context(), ip, service.EnrollInput{
-		ClientName: name, PresentedKey: bearerToken(r),
+		ClientName: req.ClientName, PresentedKey: bearerToken(r),
 		LocalConfig: req.LocalConfig, LocalConfigHash: req.LocalConfigHash,
 	})
 	if err != nil {

@@ -234,6 +234,9 @@ func (s *Store) ListEvents(ctx context.Context, f store.EventFilter) ([]domain.E
 	if f.Type != "" {
 		conds = append(conds, "type = "+arg(f.Type))
 	}
+	if f.Severity != "" {
+		conds = append(conds, "severity = "+arg(f.Severity))
+	}
 	if f.FilterDomainID != nil {
 		conds = append(conds, "domain_id = "+arg(*f.FilterDomainID))
 	}
@@ -285,12 +288,44 @@ func (s *Store) InsertAudit(ctx context.Context, a *domain.AuditEntry) error {
 }
 
 // ListAudit returns the newest audit entries first; limit <= 0 means 100, capped at 1000.
-func (s *Store) ListAudit(ctx context.Context, limit, offset int) ([]domain.AuditEntry, error) {
+func (s *Store) ListAudit(ctx context.Context, f store.AuditFilter) ([]domain.AuditEntry, error) {
+	limit := f.Limit
 	if limit <= 0 {
 		limit = defaultEventsLimit
 	}
 	limit = min(limit, maxEventsLimit)
-	offset = max(offset, 0)
+	offset := max(f.Offset, 0)
+
+	var (
+		conds []string
+		args  []any
+	)
+	arg := func(v any) string {
+		args = append(args, v)
+		return fmt.Sprintf("$%d", len(args))
+	}
+	if action := strings.TrimSpace(f.Action); action != "" {
+		conds = append(conds, "a.action ILIKE "+arg("%"+action+"%"))
+	}
+	if actor := strings.TrimSpace(f.Actor); actor != "" {
+		if id, err := uuid.Parse(actor); err == nil {
+			conds = append(conds, "a.actor_user_id = "+arg(id))
+		} else {
+			pat := "%" + actor + "%"
+			conds = append(conds, "(u.login ILIKE "+arg(pat)+" OR u.display_name ILIKE "+arg(pat)+")")
+		}
+	}
+
+	sql := `
+		SELECT a.id, a.at, a.actor_user_id, a.action, a.entity_type, a.entity_id, a.details,
+			u.login, u.display_name
+		FROM audit_log a
+		LEFT JOIN users u ON u.id = a.actor_user_id`
+	if len(conds) > 0 {
+		sql += " WHERE " + strings.Join(conds, " AND ")
+	}
+	sql += " ORDER BY a.at DESC, a.id DESC LIMIT " + arg(limit) + " OFFSET " + arg(offset)
+
 	return queryAll(ctx, s.q, "list audit", func(r rowScanner) (domain.AuditEntry, error) {
 		var a domain.AuditEntry
 		var login, display *string
@@ -306,13 +341,7 @@ func (s *Store) ListAudit(ctx context.Context, limit, offset int) ([]domain.Audi
 			a.ActorDisplayName = *display
 		}
 		return a, nil
-	}, `
-		SELECT a.id, a.at, a.actor_user_id, a.action, a.entity_type, a.entity_id, a.details,
-			u.login, u.display_name
-		FROM audit_log a
-		LEFT JOIN users u ON u.id = a.actor_user_id
-		ORDER BY a.at DESC, a.id DESC
-		LIMIT $1 OFFSET $2`, limit, offset)
+	}, sql, args...)
 }
 
 // Settings

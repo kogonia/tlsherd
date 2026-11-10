@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,10 +16,19 @@ import (
 type ListEventsInput struct {
 	UnresolvedOnly bool
 	Type           string
+	Severity       string
 	DomainID       *uuid.UUID
 	ServerID       *uuid.UUID
 	Limit          int
 	Offset         int
+}
+
+// ListAuditInput filters ListAudit.
+type ListAuditInput struct {
+	Actor  string
+	Action string
+	Limit  int
+	Offset int
 }
 
 // ExpiringDomain is a dashboard entry for a soon-to-expire certificate.
@@ -142,7 +152,7 @@ func (s *Services) ListEvents(ctx context.Context, actor *domain.User, in ListEv
 	if err != nil {
 		return nil, fmt.Errorf("list events: %w", err)
 	}
-	f.UnresolvedOnly, f.Type, f.Limit, f.Offset = in.UnresolvedOnly, in.Type, in.Limit, in.Offset
+	f.UnresolvedOnly, f.Type, f.Severity, f.Limit, f.Offset = in.UnresolvedOnly, in.Type, in.Severity, in.Limit, in.Offset
 	f.FilterDomainID, f.FilterServerID = in.DomainID, in.ServerID
 	evs, err := s.Store.ListEvents(ctx, f)
 	if err != nil {
@@ -161,15 +171,115 @@ func (s *Services) ListEventsWithNotify(ctx context.Context, actor *domain.User,
 }
 
 // ListAudit returns the newest audit entries. Admin only.
-func (s *Services) ListAudit(ctx context.Context, actor *domain.User, limit, offset int) ([]domain.AuditEntry, error) {
+func (s *Services) ListAudit(ctx context.Context, actor *domain.User, in ListAuditInput) ([]domain.AuditEntry, error) {
 	if err := requireAdmin(actor); err != nil {
 		return nil, err
 	}
-	out, err := s.Store.ListAudit(ctx, limit, offset)
+	out, err := s.Store.ListAudit(ctx, store.AuditFilter{
+		Actor: in.Actor, Action: in.Action, Limit: in.Limit, Offset: in.Offset,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("list audit: %w", err)
 	}
+	s.enrichAuditLabels(ctx, out)
 	return out, nil
+}
+
+// enrichAuditLabels fills EntityLabel from live entities when still present.
+func (s *Services) enrichAuditLabels(ctx context.Context, entries []domain.AuditEntry) {
+	cache := map[string]string{}
+	for i := range entries {
+		e := &entries[i]
+		key := e.EntityType + "\x00" + e.EntityID
+		if label, ok := cache[key]; ok {
+			e.EntityLabel = label
+			continue
+		}
+		label := s.resolveAuditEntityLabel(ctx, e.EntityType, e.EntityID)
+		cache[key] = label
+		e.EntityLabel = label
+	}
+}
+
+func (s *Services) resolveAuditEntityLabel(ctx context.Context, entityType, entityID string) string {
+	entityID = strings.TrimSpace(entityID)
+	if entityID == "" {
+		return ""
+	}
+	switch entityType {
+	case "user":
+		if id, err := uuid.Parse(entityID); err == nil {
+			if u, err := s.Store.GetUser(ctx, id); err == nil && u != nil {
+				if u.DisplayName != "" {
+					return u.DisplayName + " (" + u.Login + ")"
+				}
+				return u.Login
+			}
+		}
+		return entityID // login used as entity_id for failed logins
+	case "server":
+		if id, err := uuid.Parse(entityID); err == nil {
+			if srv, err := s.Store.GetServer(ctx, id); err == nil && srv != nil {
+				return srv.Display()
+			}
+		}
+	case "enrollment":
+		if id, err := uuid.Parse(entityID); err == nil {
+			if e, err := s.Store.GetEnrollment(ctx, id); err == nil && e != nil {
+				if e.ClientName != nil && *e.ClientName != "" {
+					return *e.ClientName
+				}
+				return e.RemoteIP.String()
+			}
+		}
+	case "domain":
+		if id, err := uuid.Parse(entityID); err == nil {
+			if d, err := s.Store.GetDomain(ctx, id); err == nil && d != nil {
+				return d.FQDN
+			}
+		}
+	case "endpoint":
+		if id, err := uuid.Parse(entityID); err == nil {
+			if ep, err := s.Store.GetEndpoint(ctx, id); err == nil && ep != nil {
+				return fmt.Sprintf("%s:%d", ep.Host, ep.Port)
+			}
+		}
+	case "group":
+		if id, err := uuid.Parse(entityID); err == nil {
+			if g, err := s.Store.GetGroup(ctx, id); err == nil && g != nil {
+				return g.Name
+			}
+		}
+	case "event":
+		var id int64
+		if _, err := fmt.Sscanf(entityID, "%d", &id); err == nil {
+			if ev, err := s.Store.GetEvent(ctx, id); err == nil && ev != nil {
+				if ev.Type != "" {
+					return ev.Type
+				}
+				return "#" + entityID
+			}
+		}
+		return "#" + entityID
+	case "certificate":
+		if id, err := uuid.Parse(entityID); err == nil {
+			if c, err := s.Store.GetCertificate(ctx, id); err == nil && c != nil {
+				if c.SubjectCN != "" {
+					return c.SubjectCN
+				}
+				return c.FingerprintSHA256
+			}
+		}
+	case "notification_account":
+		if id, err := uuid.Parse(entityID); err == nil {
+			if a, err := s.Store.GetNotificationAccount(ctx, id); err == nil && a != nil {
+				return a.Name
+			}
+		}
+	case "settings":
+		return entityID
+	}
+	return ""
 }
 
 // Dashboard computes aggregates limited to what actor may see.

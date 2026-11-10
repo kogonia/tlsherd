@@ -434,47 +434,125 @@
     }
   }
 
-  // timezonePicker returns {node, value()} with searchable IANA list.
-  function timezonePicker(current) {
-    const zones = listTimeZones();
-    const now = new Date();
-    const options = zones.map((z) => ({z, label: tzOffsetLabel(z, now)}));
-    options.sort((a, b) => a.label.localeCompare(b.label));
-    let value = current || 'UTC';
-    if (!zones.includes(value)) value = 'UTC';
-    const input = h('input', {
-      type: 'text', class: 'tz-input', autocomplete: 'off',
-      placeholder: 'Search time zones…', value: tzOffsetLabel(value, now),
-    });
-    const list = h('div', {class: 'tz-list', hidden: true});
-    const wrap = h('div', {class: 'tz-picker'}, input, list);
+  // liveSearch: text field + filtered dropdown. items = [{value, label, search?}].
+  // freeText: value() is the input text (list filters). Otherwise value() is the picked id.
+  function liveSearch(opts) {
+    opts = opts || {};
+    let items = (opts.items || []).slice();
+    let value = opts.value != null ? String(opts.value) : '';
+    const freeText = !!opts.freeText;
+    const allowEmpty = !!opts.allowEmpty;
+    const emptyLabel = opts.emptyLabel || 'all';
+    const max = opts.max || 80;
 
-    function render(filter) {
-      const q = (filter || '').toLowerCase().trim();
+    function findItem(v) {
+      return items.find((it) => String(it.value) === String(v));
+    }
+    function labelFor(v) {
+      if (v === '' || v == null) return freeText ? '' : (allowEmpty ? emptyLabel : '');
+      const it = findItem(v);
+      return it ? it.label : String(v);
+    }
+
+    const el = h('input', {
+      type: 'text', class: 'live-search-input', autocomplete: 'off',
+      placeholder: opts.placeholder || 'Search…',
+      value: freeText ? value : labelFor(value),
+    });
+    const list = h('div', {class: 'live-search-list', hidden: true});
+    const wrap = h('div', {class: 'live-search' + (opts.wide ? ' wide' : '')}, el, list);
+
+    function matches(it, q) {
+      if (!q) return true;
+      const hay = ((it.search || '') + ' ' + (it.label || '') + ' ' + String(it.value || '')).toLowerCase();
+      return hay.includes(q);
+    }
+
+    function pick(v, label) {
+      value = v == null ? '' : String(v);
+      // Free-text mode keeps the filter key in the input; dropdown still shows labels.
+      el.value = freeText ? value : label;
+      list.hidden = true;
+      if (opts.onChange) opts.onChange(value, el.value);
+    }
+
+    function render(filterText) {
+      const q = (filterText || '').toLowerCase().trim();
       list.replaceChildren();
       let n = 0;
-      for (const o of options) {
-        if (q && !o.label.toLowerCase().includes(q) && !o.z.toLowerCase().includes(q)) continue;
-        const item = h('button', {type: 'button', class: 'tz-item' + (o.z === value ? ' active' : '')}, o.label);
-        item.addEventListener('mousedown', (ev) => {
-          ev.preventDefault();
-          value = o.z;
-          input.value = o.label;
-          list.hidden = true;
-        });
+      if (allowEmpty && (!q || emptyLabel.toLowerCase().includes(q) || 'all'.includes(q))) {
+        const item = h('button', {
+          type: 'button',
+          class: 'live-search-item' + (value === '' ? ' active' : ''),
+        }, emptyLabel);
+        item.addEventListener('mousedown', (ev) => { ev.preventDefault(); pick('', emptyLabel); });
         list.append(item);
-        if (++n >= 80) break;
+        n++;
+      }
+      for (const it of items) {
+        if (!matches(it, q)) continue;
+        const item = h('button', {
+          type: 'button',
+          class: 'live-search-item' + (String(it.value) === value ? ' active' : ''),
+        }, it.label);
+        item.addEventListener('mousedown', (ev) => { ev.preventDefault(); pick(it.value, it.label); });
+        list.append(item);
+        if (++n >= max) break;
       }
       list.hidden = n === 0;
     }
 
-    input.addEventListener('focus', () => render(input.value));
-    input.addEventListener('input', () => render(input.value));
-    input.addEventListener('blur', () => {
-      setTimeout(() => { list.hidden = true; input.value = tzOffsetLabel(value, now); }, 150);
+    el.addEventListener('focus', () => render(freeText ? el.value : ''));
+    el.addEventListener('input', () => {
+      if (freeText) {
+        value = el.value;
+        if (opts.onChange) opts.onChange(value, el.value);
+      }
+      render(el.value);
+    });
+    el.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        const first = list.querySelector('.live-search-item');
+        if (first) first.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+        list.hidden = true;
+      } else if (ev.key === 'Escape') {
+        list.hidden = true;
+        if (!freeText) el.value = labelFor(value);
+      }
+    });
+    el.addEventListener('blur', () => {
+      setTimeout(() => {
+        list.hidden = true;
+        if (!freeText) el.value = labelFor(value);
+      }, 150);
     });
 
-    return {node: wrap, value: () => value};
+    return {
+      node: wrap,
+      value: () => (freeText ? el.value : value),
+      setValue(v) {
+        value = v == null ? '' : String(v);
+        el.value = freeText ? value : labelFor(value);
+      },
+      setItems(next) {
+        items = (next || []).slice();
+      },
+    };
+  }
+
+  // timezonePicker returns {node, value()} with searchable IANA list.
+  function timezonePicker(current) {
+    const zones = listTimeZones();
+    const now = new Date();
+    let value = current || 'UTC';
+    if (!zones.includes(value)) value = 'UTC';
+    const items = zones.map((z) => ({value: z, label: tzOffsetLabel(z, now), search: z}));
+    items.sort((a, b) => a.label.localeCompare(b.label));
+    return liveSearch({
+      items, value, allowEmpty: false, wide: true,
+      placeholder: 'Search time zones…',
+    });
   }
 
   // ------------------------------------------------- agent config form
@@ -732,26 +810,56 @@
     let status = 'pending';
     const state = {limit: 25, offset: 0};
     const list = h('div', null);
+    let cache = [];
+    let serversCache = [];
     const filter = select('status', [['pending', 'Pending'], ['accepted', 'Accepted'], ['rejected', 'Rejected'], ['', 'All']], status);
     filter.addEventListener('change', () => { status = filter.value; state.offset = 0; refresh(); });
-    const pager = pagerBar(state, () => refresh());
+    const search = liveSearch({
+      freeText: true, placeholder: 'Search IP, agent, keys…',
+      onChange() { state.offset = 0; renderList(); },
+    });
+    const pager = pagerBar(state, () => renderList());
     root.replaceChildren(
-      h('div', {class: 'toolbar'}, h('label', {class: 'inline'}, 'Show ', filter), button('Refresh', () => refresh())),
+      h('div', {class: 'toolbar'},
+        h('label', {class: 'inline'}, 'Show ', filter),
+        search.node,
+        button('Refresh', () => refresh())),
       section('Enrollments', pager.bar, list));
 
-    async function refresh() {
-      await loadInto(list, async () => {
-        const [enrolls, servers] = await Promise.all([
-          api('GET', '/enrollments' + (status ? '?status=' + encodeURIComponent(status) : '')),
-          api('GET', '/servers'),
-        ]);
-        const all = enrolls || [];
-        const page = pageItems(all, state);
-        pager.update(page.length, all.length);
-        const rows = page.map((e) => enrollRow(e, servers || []));
+    function matchEnrollment(e, q) {
+      if (!q) return true;
+      const bits = [
+        e.remote_ip, e.client_name, e.reason, e.status,
+        e.presented_key_prefix, e.previous_key_prefix, e.id,
+      ];
+      return bits.some((x) => x && String(x).toLowerCase().includes(q));
+    }
+
+    function renderList() {
+      return loadInto(list, async () => {
+        const q = (search.value() || '').toLowerCase().trim();
+        const filtered = !q ? cache : cache.filter((e) => matchEnrollment(e, q));
+        search.setItems(cache.map((e) => ({
+          value: e.id,
+          label: (e.client_name || e.remote_ip || e.id) + (e.presented_key_prefix ? ' [' + e.presented_key_prefix + ']' : ''),
+          search: [e.remote_ip, e.client_name, e.presented_key_prefix, e.previous_key_prefix].filter(Boolean).join(' '),
+        })));
+        const page = pageItems(filtered, state);
+        pager.update(page.length, filtered.length);
+        const rows = page.map((e) => enrollRow(e, serversCache));
         return table(['IP', 'Agent', 'Reason', 'Keys', 'Last seen', 'Status', 'Decision'], rows,
           status === 'pending' ? 'No agents are waiting for approval.' : 'No enrollments.');
       });
+    }
+
+    async function refresh() {
+      const [enrolls, servers] = await Promise.all([
+        api('GET', '/enrollments' + (status ? '?status=' + encodeURIComponent(status) : '')),
+        api('GET', '/servers'),
+      ]);
+      cache = enrolls || [];
+      serversCache = servers || [];
+      await renderList();
     }
 
     function enrollRow(e, servers) {
@@ -884,8 +992,14 @@
   pages.domains = async function (root) {
     const state = {limit: 25, offset: 0};
     const list = h('div', null);
-    const pager = pagerBar(state, () => refresh());
+    let cache = [];
     const groups = (await api('GET', '/groups')) || [];
+    const gname = new Map(groups.map((g) => [g.id, g.name]));
+    const search = liveSearch({
+      freeText: true, placeholder: 'Search domain, groups, notes…',
+      onChange() { state.offset = 0; renderList(); },
+    });
+    const pager = pagerBar(state, () => renderList());
     const picker = groupPicker(groups, []);
     const form = h('form', null,
       h('div', {class: 'row'}, field('FQDN', input('fqdn', '', {required: true, placeholder: 'www.example.com'})), field('Notes', input('notes', ''))),
@@ -901,14 +1015,28 @@
         created = await api('POST', '/domains', {fqdn: form.fqdn.value, notes: form.notes.value, group_ids: ids});
       }, 'Domain created')) location.href = '/domains/' + created.id;
     });
-    root.replaceChildren(section('Domains', pager.bar, list), section('New domain', form));
+    root.replaceChildren(
+      h('div', {class: 'toolbar'}, search.node, button('Refresh', () => refresh())),
+      section('Domains', pager.bar, list),
+      section('New domain', form));
 
-    async function refresh() {
-      await loadInto(list, async () => {
-        const domains = (await api('GET', '/domains')) || [];
-        const gname = new Map(groups.map((g) => [g.id, g.name]));
-        const page = pageItems(domains, state);
-        pager.update(page.length, domains.length);
+    function matchDomain(d, q) {
+      if (!q) return true;
+      const groupsLabel = (d.group_ids || []).map((id) => gname.get(id) || '').join(' ');
+      return [d.fqdn, d.notes, groupsLabel].some((x) => x && String(x).toLowerCase().includes(q));
+    }
+
+    function renderList() {
+      return loadInto(list, async () => {
+        const q = (search.value() || '').toLowerCase().trim();
+        const filtered = !q ? cache : cache.filter((d) => matchDomain(d, q));
+        search.setItems(cache.map((d) => ({
+          value: d.id,
+          label: d.fqdn,
+          search: [d.fqdn, d.notes, (d.group_ids || []).map((id) => gname.get(id) || '').join(' ')].join(' '),
+        })));
+        const page = pageItems(filtered, state);
+        pager.update(page.length, filtered.length);
         const rows = page.map((d) => {
           const c = d.current_certificate;
           return [
@@ -921,6 +1049,11 @@
         });
         return table(['Domain', 'Version', 'Expires', 'Groups', 'Notes'], rows, 'No domains yet.');
       });
+    }
+
+    async function refresh() {
+      cache = (await api('GET', '/domains')) || [];
+      await renderList();
     }
     await refresh();
   };
@@ -1154,33 +1287,34 @@
     const state = {limit: 25, offset: 0};
     const list = h('div', null);
     const note = h('p', {class: 'muted'}, '');
-    const pager = pagerBar(state, () => refresh());
-    root.replaceChildren(section('Servers', pager.bar, note, list));
+    let serversCache = [];
+    let byServer = new Map();
+    let dmap = new Map();
+    const search = liveSearch({
+      freeText: true, placeholder: 'Search servers…',
+      onChange() { state.offset = 0; renderList(); },
+    });
+    const pager = pagerBar(state, () => renderList());
+    root.replaceChildren(
+      h('div', {class: 'toolbar'}, search.node, button('Refresh', () => refresh())),
+      section('Servers', pager.bar, note, list));
 
-    async function refresh() {
-      const [listRaw, eps, domains] = await Promise.all([
-        api('GET', '/servers'), api('GET', '/monitor/endpoints'), api('GET', '/domains'),
-      ]);
-      const servers = listRaw || [];
-      const dmap = new Map((domains || []).map((d) => [d.id, d]));
-      const byServer = new Map();
-      (eps || []).forEach((ep) => {
-        if (!byServer.has(ep.server_id)) byServer.set(ep.server_id, []);
-        byServer.get(ep.server_id).push(ep);
-      });
-      servers.sort((a, b) => {
-        const score = (s) => (s.open_critical || 0) * 100 + (s.open_warning || 0) * 10 + (s.endpoints_unhealthy || 0) + (s.agent_status === 'offline' || s.agent_status === 'blocked_identity' ? 50 : 0);
-        return score(b) - score(a) || serverLabel(a).localeCompare(serverLabel(b));
-      });
+    function renderList() {
+      const q = (search.value() || '').toLowerCase().trim();
+      const servers = !q ? serversCache
+        : serversCache.filter((s) => serverLabel(s).toLowerCase().includes(q));
+      search.setItems(serversCache.map((s) => ({
+        value: s.id, label: serverLabel(s), search: serverLabel(s),
+      })));
       const problemCount = servers.filter((s) => (s.open_events || 0) > 0 || s.endpoints_unhealthy || s.agent_status === 'offline' || s.agent_status === 'blocked_identity').length;
-      note.textContent = !servers.length
+      note.textContent = !serversCache.length
         ? 'No servers yet. Agents appear on the Enrollments page after their first contact.'
         : (problemCount ? problemCount + ' server(s) with problems (sorted first).' : 'No open agent/monitor problems.');
 
       const page = pageItems(servers, state);
       pager.update(page.length, servers.length);
       if (!servers.length) {
-        list.replaceChildren();
+        list.replaceChildren(serversCache.length ? h('p', {class: 'muted'}, 'No servers match the search.') : null);
         return;
       }
       list.replaceChildren(h('div', {class: 'tablewrap'}, h('table', null,
@@ -1213,6 +1347,24 @@
           }
           return [main, detail];
         })))));
+    }
+
+    async function refresh() {
+      const [listRaw, eps, domains] = await Promise.all([
+        api('GET', '/servers'), api('GET', '/monitor/endpoints'), api('GET', '/domains'),
+      ]);
+      serversCache = listRaw || [];
+      dmap = new Map((domains || []).map((d) => [d.id, d]));
+      byServer = new Map();
+      (eps || []).forEach((ep) => {
+        if (!byServer.has(ep.server_id)) byServer.set(ep.server_id, []);
+        byServer.get(ep.server_id).push(ep);
+      });
+      serversCache.sort((a, b) => {
+        const score = (s) => (s.open_critical || 0) * 100 + (s.open_warning || 0) * 10 + (s.endpoints_unhealthy || 0) + (s.agent_status === 'offline' || s.agent_status === 'blocked_identity' ? 50 : 0);
+        return score(b) - score(a) || serverLabel(a).localeCompare(serverLabel(b));
+      });
+      renderList();
     }
     await refresh();
   };
@@ -1602,6 +1754,7 @@
     const params = new URLSearchParams(location.search);
     const state = {
       type: params.get('type') || '',
+      severity: params.get('severity') || '',
       unresolved: params.get('unresolved') !== '0' && params.get('unresolved') !== 'false',
       limit: parsePageSize(params.get('limit') || '25', 25),
       offset: Number(params.get('offset') || 0) || 0,
@@ -1611,29 +1764,48 @@
     const tableSlot = h('div', null);
     const [srv, domains] = await Promise.all([serversById(), api('GET', '/domains')]);
     const dmap = new Map((domains || []).map((d) => [d.id, d]));
-    const types = ['', 'cert_expired', 'cert_expiring_soon', 'cert_key_mismatch', 'cert_chain_invalid', 'cert_domain_mismatch_confirmed',
+    const types = ['cert_expired', 'cert_expiring_soon', 'cert_key_mismatch', 'cert_chain_invalid', 'cert_domain_mismatch_confirmed',
       'cert_expired_upload_confirmed', 'cert_not_yet_valid_upload_confirmed',
       'cert_upload_rejected', 'cert_rollback_performed', 'agent_enroll_pending', 'agent_accepted', 'agent_rejected', 'agent_identity_mismatch',
       'agent_offline', 'agent_apply_failed', 'agent_verify_failed', 'agent_post_check_mismatch', 'agent_config_updated',
       'endpoint_down', 'endpoint_cert_mismatch', 'domain_ungrouped'];
-    const typeSel = select('type', types.map((t) => [t, t || 'all types']), state.type);
-    const serverSel = select('server_id', [['', 'all servers']].concat(srv.list.map((s) => [s.id, serverLabel(s)])), state.server_id);
-    const domainSel = select('domain_id', [['', 'all domains']].concat((domains || []).map((d) => [d.id, d.fqdn])), state.domain_id);
+    const typeSel = liveSearch({
+      allowEmpty: true, emptyLabel: 'all types', value: state.type, placeholder: 'Type…',
+      items: types.map((t) => ({value: t, label: t})),
+    });
+    const severitySel = liveSearch({
+      allowEmpty: true, emptyLabel: 'all severities', value: state.severity, placeholder: 'Severity…',
+      items: [
+        {value: 'info', label: 'info'},
+        {value: 'warning', label: 'warning'},
+        {value: 'critical', label: 'critical'},
+      ],
+    });
+    const serverSel = liveSearch({
+      allowEmpty: true, emptyLabel: 'all servers', value: state.server_id, placeholder: 'Server…',
+      items: srv.list.map((s) => ({value: s.id, label: serverLabel(s)})),
+    });
+    const domainSel = liveSearch({
+      allowEmpty: true, emptyLabel: 'all domains', value: state.domain_id, placeholder: 'Domain…',
+      items: (domains || []).map((d) => ({value: d.id, label: d.fqdn})),
+    });
     const unres = h('input', {type: 'checkbox', checked: state.unresolved});
     const applyFilters = () => {
-      state.type = typeSel.value;
+      state.type = typeSel.value();
+      state.severity = severitySel.value();
       state.unresolved = unres.checked;
-      state.server_id = serverSel.value;
-      state.domain_id = domainSel.value;
+      state.server_id = serverSel.value();
+      state.domain_id = domainSel.value();
       state.offset = 0;
       refresh();
     };
-    [typeSel, serverSel, domainSel, unres].forEach((x) => x.addEventListener('change', applyFilters));
     const filterBar = h('div', {class: 'toolbar'},
-      h('label', {class: 'inline'}, 'Type ', typeSel),
-      h('label', {class: 'inline'}, 'Server ', serverSel),
-      h('label', {class: 'inline'}, 'Domain ', domainSel),
+      h('label', {class: 'inline'}, 'Type ', typeSel.node),
+      h('label', {class: 'inline'}, 'Severity ', severitySel.node),
+      h('label', {class: 'inline'}, 'Server ', serverSel.node),
+      h('label', {class: 'inline'}, 'Domain ', domainSel.node),
       h('label', {class: 'check'}, unres, 'open only'),
+      button('Filter', applyFilters, 'primary'),
       button('Refresh', () => refresh()));
 
     const pager = pagerBar(state, () => refresh());
@@ -1642,6 +1814,7 @@
     async function refresh() {
       const q = new URLSearchParams({limit: state.limit, offset: state.offset});
       if (state.type) q.set('type', state.type);
+      if (state.severity) q.set('severity', state.severity);
       if (state.unresolved) q.set('unresolved', '1');
       if (state.server_id) q.set('server_id', state.server_id);
       if (state.domain_id) q.set('domain_id', state.domain_id);
@@ -1653,20 +1826,73 @@
     }
 
     if (IS_ADMIN) {
-      const auditState = {limit: 25, offset: 0};
+      const auditState = {
+        limit: 25, offset: 0,
+        actor: '', action: '',
+      };
       const auditTable = h('div', null);
+      const auditActions = [
+        'auth.login', 'auth.login_failed', 'user.create', 'user.update', 'user.delete', 'user.password_reset',
+        'user.password_change', 'user.preferences', 'user.bootstrap',
+        'enrollment.accept', 'enrollment.reject',
+        'server.update', 'server.delete', 'server.rotate_key', 'server.revoke_keys',
+        'server.config_update', 'server.local_config_update',
+        'domain.create', 'domain.update', 'domain.delete', 'domain_server.upsert', 'domain_server.remove',
+        'certificate.upload', 'certificate.rollback', 'certificate.key_download', 'certificate.version_delete', 'certificate.delete',
+        'endpoint.create', 'endpoint.update', 'endpoint.delete',
+        'event.dismiss', 'group.create', 'group.update', 'group.delete', 'group.permissions_set',
+        'agent_defaults.update', 'notifications.settings_update',
+        'notifications.account_create', 'notifications.account_update', 'notifications.account_delete',
+      ];
+      let users = [];
+      try { users = (await api('GET', '/users')) || []; } catch (e) { users = []; }
+      const actorSel = liveSearch({
+        freeText: true, placeholder: 'Actor (login or name)…',
+        items: users.map((u) => ({
+          value: u.login,
+          label: (u.display_name ? u.display_name + ' (' + u.login + ')' : u.login),
+          search: [u.login, u.display_name, u.id].filter(Boolean).join(' '),
+        })),
+      });
+      const actionSel = liveSearch({
+        freeText: true, placeholder: 'Action…',
+        items: auditActions.map((a) => ({value: a, label: a})),
+      });
+      const auditFilterBar = h('div', {class: 'toolbar'},
+        h('label', {class: 'inline'}, 'Actor ', actorSel.node),
+        h('label', {class: 'inline'}, 'Action ', actionSel.node),
+        button('Filter', () => {
+          auditState.actor = (actorSel.value() || '').trim();
+          auditState.action = (actionSel.value() || '').trim();
+          auditState.offset = 0;
+          refreshAudit();
+        }, 'primary'),
+        button('Refresh', () => refreshAudit()));
       const auditPager = pagerBar(auditState, () => refreshAudit());
-      root.append(section('Audit log (admin)', auditPager.bar, auditTable));
+      root.append(auditFilterBar, section('Audit log (admin)', auditPager.bar, auditTable));
+
+      function entityCell(a) {
+        const label = a.entity_label || '';
+        if (label) {
+          return h('div', null,
+            h('div', null, a.entity_type + ' · ' + label),
+            h('div', {class: 'small muted'}, a.entity_id));
+        }
+        return h('div', null, a.entity_type + ' ' + a.entity_id);
+      }
+
       async function refreshAudit() {
         await loadInto(auditTable, async () => {
-          const list = (await api('GET', '/audit?limit=' + auditState.limit + '&offset=' + auditState.offset)) || [];
+          const q = new URLSearchParams({limit: auditState.limit, offset: auditState.offset});
+          if (auditState.actor) q.set('actor', auditState.actor);
+          if (auditState.action) q.set('action', auditState.action);
+          const list = (await api('GET', '/audit?' + q)) || [];
           auditPager.update(list.length);
           return table(['When', 'Actor', 'Action', 'Entity', 'Details'],
             list.map((a) => {
               const actor = a.actor_display_name || a.actor_login
                 || (a.actor_user_id ? code(a.actor_user_id.slice(0, 8)) : muted('system'));
-              return [fmt(a.at), actor, code(a.action),
-                a.entity_type + ' ' + a.entity_id, detailsBlock(a.details)];
+              return [fmt(a.at), actor, code(a.action), entityCell(a), detailsBlock(a.details)];
             }), 'Audit log is empty.');
         });
       }
@@ -1752,7 +1978,7 @@
     resultsSection.hidden = true;
     const formSlot = h('div', null);
     const dnsSlot = h('div', {class: 'dns-rows'});
-    const pager = pagerBar(state, () => refresh());
+    const pager = pagerBar(state, () => refresh(false));
     root.replaceChildren(summary, filterBar, section('Endpoints', pager.bar, list), resultsSection,
       section('New endpoint', formSlot, dnsSlot));
 
@@ -1764,11 +1990,32 @@
 
     const filterServer = select('filter_server', [['', 'all servers']].concat(serverOpts), '');
     const filterDomain = select('filter_domain', [['', 'all domains']].concat(domainOpts), '');
+    const search = liveSearch({
+      freeText: true, placeholder: 'Search URL, server…',
+      onChange() { state.offset = 0; refresh(false); },
+    });
+    const issueFilter = liveSearch({
+      allowEmpty: true, emptyLabel: 'all issues', value: '',
+      placeholder: 'Issue…',
+      items: [
+        {value: 'ok', label: 'ok'},
+        {value: 'unhealthy', label: 'unhealthy (any)'},
+        {value: 'unreachable', label: 'unreachable'},
+        {value: 'tls_fail', label: 'tls fail'},
+        {value: 'cert_expired', label: 'cert expired'},
+        {value: 'cert_expiring', label: 'cert expiring'},
+        {value: 'not_checked', label: 'not checked'},
+        {value: 'disabled', label: 'disabled'},
+      ],
+      onChange() { state.offset = 0; refresh(false); },
+    });
     filterBar.replaceChildren(
+      search.node,
+      issueFilter.node,
       h('label', {class: 'inline'}, 'Server ', filterServer),
       h('label', {class: 'inline'}, 'Domain ', filterDomain),
-      button('Refresh', () => refresh()));
-    [filterServer, filterDomain].forEach((x) => x.addEventListener('change', () => { state.offset = 0; refresh(); }));
+      button('Refresh', () => refresh(true)));
+    [filterServer, filterDomain].forEach((x) => x.addEventListener('change', () => { state.offset = 0; refresh(false); }));
 
     function makeEndpointRow(prefill) {
       const sSel = select('server_id', [['', '— select —']].concat(serverOpts), (prefill && prefill.server_id) || '');
@@ -1923,12 +2170,41 @@
         'No results yet.');
     }
 
-    async function refresh() {
-      const eps = (await api('GET', '/monitor/endpoints')) || [];
-      endpointsCache = eps;
+    async function refresh(refetch) {
+      if (refetch !== false) {
+        endpointsCache = (await api('GET', '/monitor/endpoints')) || [];
+      }
+      const eps = endpointsCache;
       const fs = filterServer.value;
       const fd = filterDomain.value;
-      const filtered = eps.filter((ep) => (!fs || ep.server_id === fs) && (!fd || ep.domain_id === fd));
+      const q = (search.value() || '').toLowerCase().trim();
+      const issue = issueFilter.value();
+      search.setItems(eps.map((ep) => {
+        const s = srv.map.get(ep.server_id);
+        const url = ep.host + ':' + ep.port;
+        return {
+          value: ep.id,
+          label: url + (s ? ' · ' + serverLabel(s) : ''),
+          search: url + ' ' + (s ? serverLabel(s) : ''),
+        };
+      }));
+      const filtered = eps.filter((ep) => {
+        if (fs && ep.server_id !== fs) return false;
+        if (fd && ep.domain_id !== fd) return false;
+        if (issue === 'ok') {
+          if (ep.issue) return false;
+        } else if (issue === 'unhealthy') {
+          if (ep.healthy || ep.issue === 'disabled') return false;
+        } else if (issue && ep.issue !== issue) {
+          return false;
+        }
+        if (q) {
+          const s = srv.map.get(ep.server_id);
+          const hay = [ep.host, String(ep.port), s ? serverLabel(s) : ''].join(' ').toLowerCase();
+          if (!hay.includes(q)) return false;
+        }
+        return true;
+      });
       const counts = {total: filtered.length, unhealthy: 0, unreachable: 0, tls_fail: 0, cert_expired: 0, cert_expiring: 0, not_checked: 0};
       filtered.forEach((ep) => {
         if (!ep.healthy && ep.issue !== 'disabled') {

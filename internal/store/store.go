@@ -138,7 +138,7 @@ type Store interface {
 	ResolveEventByID(ctx context.Context, id int64, at time.Time, details []byte) (*domain.Event, error)
 	ListEvents(ctx context.Context, filter EventFilter) ([]domain.Event, error)
 	InsertAudit(ctx context.Context, a *domain.AuditEntry) error
-	ListAudit(ctx context.Context, limit, offset int) ([]domain.AuditEntry, error)
+	ListAudit(ctx context.Context, filter AuditFilter) ([]domain.AuditEntry, error)
 	GetSetting(ctx context.Context, key string) ([]byte, error)
 	SetSetting(ctx context.Context, key string, value []byte) error
 	// DeleteSetting removes key; a missing key is not an error.
@@ -173,6 +173,7 @@ type Store interface {
 type EventFilter struct {
 	UnresolvedOnly bool
 	Type           string
+	Severity       string
 	// DomainIDs, ServerIDs, GroupIDs form the OR visibility scope for operators.
 	DomainIDs []uuid.UUID
 	ServerIDs []uuid.UUID
@@ -182,6 +183,15 @@ type EventFilter struct {
 	FilterServerID *uuid.UUID
 	Limit          int
 	Offset         int
+}
+
+// AuditFilter selects audit log rows. Actor matches login or display_name (ILIKE),
+// or exact actor_user_id when Actor is a UUID. Action matches exactly when set.
+type AuditFilter struct {
+	Actor  string
+	Action string
+	Limit  int
+	Offset int
 }
 
 // OpenEventCount aggregates unresolved events for one server.

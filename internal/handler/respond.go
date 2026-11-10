@@ -189,9 +189,32 @@ type auditDTO struct {
 func auditDTOs(in []domain.AuditEntry) []auditDTO {
 	out := make([]auditDTO, len(in))
 	for i, e := range in {
-		out[i] = auditDTO{AuditEntry: e, Details: rawOrEmpty(e.Details)}
+		details := mergeAuditDetails(e)
+		out[i] = auditDTO{AuditEntry: e, Details: details}
 	}
 	return out
+}
+
+// mergeAuditDetails ensures entity_id and entity_label appear in details for the UI.
+func mergeAuditDetails(e domain.AuditEntry) json.RawMessage {
+	m := map[string]any{}
+	if len(e.Details) > 0 {
+		_ = json.Unmarshal(e.Details, &m)
+	}
+	if m == nil {
+		m = map[string]any{}
+	}
+	if _, ok := m["entity_id"]; !ok && e.EntityID != "" {
+		m["entity_id"] = e.EntityID
+	}
+	if _, ok := m["entity_label"]; !ok && e.EntityLabel != "" {
+		m["entity_label"] = e.EntityLabel
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return rawOrEmpty(e.Details)
+	}
+	return b
 }
 
 type domainServerDTO struct {

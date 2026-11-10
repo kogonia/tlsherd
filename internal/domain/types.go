@@ -339,6 +339,7 @@ type AuditEntry struct {
 	Action           string     `json:"action"`
 	EntityType       string     `json:"entity_type"`
 	EntityID         string     `json:"entity_id"`
+	EntityLabel      string     `json:"entity_label,omitempty"`
 	Details          []byte     `json:"-"`
 }
 
