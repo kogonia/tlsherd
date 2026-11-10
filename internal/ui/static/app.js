@@ -436,6 +436,7 @@
 
   // liveSearch: text field + filtered dropdown. items = [{value, label, search?}].
   // freeText: value() is the input text (list filters). Otherwise value() is the picked id.
+  // Empty allowEmpty selection stays blank; emptyLabel is placeholder + dropdown option only.
   function liveSearch(opts) {
     opts = opts || {};
     let items = (opts.items || []).slice();
@@ -444,21 +445,30 @@
     const allowEmpty = !!opts.allowEmpty;
     const emptyLabel = opts.emptyLabel || 'all';
     const max = opts.max || 80;
+    // allowEmpty defaults show as placeholder text, not as a filled input value.
+    const placeholder = allowEmpty ? emptyLabel : (opts.placeholder || 'Search…');
 
     function findItem(v) {
       return items.find((it) => String(it.value) === String(v));
     }
     function labelFor(v) {
-      if (v === '' || v == null) return freeText ? '' : (allowEmpty ? emptyLabel : '');
+      if (v === '' || v == null) return '';
       const it = findItem(v);
       return it ? it.label : String(v);
+    }
+    function syncInput() {
+      if (freeText) {
+        el.value = value;
+        return;
+      }
+      el.value = labelFor(value); // empty value => blank; placeholder shows default
     }
 
     const el = h('input', {
       type: 'text', class: 'live-search-input', autocomplete: 'off',
-      placeholder: opts.placeholder || 'Search…',
-      value: freeText ? value : labelFor(value),
+      placeholder, value: '',
     });
+    syncInput();
     const list = h('div', {class: 'live-search-list', hidden: true});
     const wrap = h('div', {class: 'live-search' + (opts.wide ? ' wide' : '')}, el, list);
 
@@ -470,8 +480,8 @@
 
     function pick(v, label) {
       value = v == null ? '' : String(v);
-      // Free-text mode keeps the filter key in the input; dropdown still shows labels.
-      el.value = freeText ? value : label;
+      if (freeText) el.value = value;
+      else el.value = value === '' ? '' : label;
       list.hidden = true;
       if (opts.onChange) opts.onChange(value, el.value);
     }
@@ -485,7 +495,7 @@
           type: 'button',
           class: 'live-search-item' + (value === '' ? ' active' : ''),
         }, emptyLabel);
-        item.addEventListener('mousedown', (ev) => { ev.preventDefault(); pick('', emptyLabel); });
+        item.addEventListener('mousedown', (ev) => { ev.preventDefault(); pick('', ''); });
         list.append(item);
         n++;
       }
@@ -502,7 +512,11 @@
       list.hidden = n === 0;
     }
 
-    el.addEventListener('focus', () => render(freeText ? el.value : ''));
+    el.addEventListener('focus', () => {
+      // Select existing text so typing replaces without manual clear.
+      el.select();
+      render('');
+    });
     el.addEventListener('input', () => {
       if (freeText) {
         value = el.value;
@@ -518,13 +532,13 @@
         list.hidden = true;
       } else if (ev.key === 'Escape') {
         list.hidden = true;
-        if (!freeText) el.value = labelFor(value);
+        syncInput();
       }
     });
     el.addEventListener('blur', () => {
       setTimeout(() => {
         list.hidden = true;
-        if (!freeText) el.value = labelFor(value);
+        syncInput();
       }, 150);
     });
 
@@ -533,7 +547,7 @@
       value: () => (freeText ? el.value : value),
       setValue(v) {
         value = v == null ? '' : String(v);
-        el.value = freeText ? value : labelFor(value);
+        syncInput();
       },
       setItems(next) {
         items = (next || []).slice();
@@ -862,11 +876,25 @@
       await renderList();
     }
 
+    function enrollKeys(e, servers) {
+      const parts = [];
+      if (e.presented_key_prefix) parts.push(h('div', null, 'presented: ', code(e.presented_key_prefix)));
+      if (e.previous_key_prefix) parts.push(h('div', null, 'previous: ', code(e.previous_key_prefix)));
+      const sid = e.previous_server_id || e.server_id;
+      if (sid) {
+        const s = (servers || []).find((x) => x.id === sid);
+        if (s && s.key_prefix) {
+          const dup = s.key_prefix === e.previous_key_prefix || s.key_prefix === e.presented_key_prefix;
+          if (!dup) parts.push(h('div', null, 'key: ', code(s.key_prefix)));
+        }
+      }
+      if (!parts.length) return muted(e.status === 'pending' ? 'new' : '—');
+      return h('div', {class: 'small'}, parts);
+    }
+
     function enrollRow(e, servers) {
       const pending = e.status === 'pending';
-      const keys = h('div', {class: 'small'},
-        e.presented_key_prefix ? h('div', null, 'presented: ', code(e.presented_key_prefix)) : null,
-        e.previous_key_prefix ? h('div', null, 'previous: ', code(e.previous_key_prefix)) : null);
+      const keys = enrollKeys(e, servers);
       let decision;
       if (pending) {
         const name = input('display_name', '', {placeholder: 'display name (optional)'});
