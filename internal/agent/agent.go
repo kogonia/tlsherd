@@ -220,6 +220,7 @@ func (a *Agent) enroll(ctx context.Context) (time.Duration, error) {
 		a.state.ConfigVersion = 0
 		// New server identity: drop prior domain fingerprints so disk is re-checked.
 		a.state.Domains = map[string]DomainState{}
+		a.state.ClientCerts = nil
 		if resp.Config != nil {
 			if err := a.adoptConfig(*resp.Config, resp.ConfigVersion); err != nil {
 				a.log.Error("adopt enrolled config; using defaults", "operation", "enroll", "error", err)
@@ -292,6 +293,9 @@ func (a *Agent) poll(ctx context.Context) (time.Duration, error) {
 	}
 
 	err = a.syncDomains(ctx, resp.Domains)
+	if !errors.Is(err, ErrUnauthorized) {
+		err = errors.Join(err, a.syncClientCerts(ctx, resp.ClientCerts))
+	}
 	if errors.Is(err, ErrUnauthorized) {
 		return a.dropKey("server returned unauthorized"), err
 	}

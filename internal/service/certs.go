@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,6 +28,7 @@ const (
 	CertProblemExpired        = "expired"
 	CertProblemNotYetValid    = "not_yet_valid"
 	CertProblemDomainMismatch = "domain_mismatch"
+	CertProblemCAMismatch     = "ca_mismatch"
 )
 
 // UploadInput is a certificate bundle in PEM form.
@@ -37,6 +39,8 @@ type UploadInput struct {
 	ConfirmDomainMismatch bool
 	ConfirmExpired        bool
 	ConfirmNotYetValid    bool
+	// ConfirmCAMismatch accepts a leaf that does not chain to any linked CA managed certificate.
+	ConfirmCAMismatch bool
 	// ConfirmWarnings acknowledges every soft problem in one shot (UI confirm modal).
 	ConfirmWarnings bool
 }
@@ -59,8 +63,10 @@ type CertProblem struct {
 // CertConfirmationError is returned when the bundle parses but has soft issues
 // (expired, not yet valid, domain mismatch) that were not confirmed.
 type CertConfirmationError struct {
-	Problems           []CertProblem       `json:"problems"`
-	RequestedDomain    string              `json:"requested_domain"`
+	Problems        []CertProblem `json:"problems"`
+	RequestedDomain string        `json:"requested_domain"`
+	// ManagedCertName is set instead of RequestedDomain for managed certificate uploads.
+	ManagedCertName    string              `json:"managed_cert,omitempty"`
 	UploadedSANs       []string            `json:"uploaded_sans"`
 	UploadedCN         string              `json:"uploaded_cn"`
 	NotBefore          time.Time           `json:"not_before"`
@@ -140,6 +146,13 @@ func (s *Services) UploadCertificate(ctx context.Context, actor *domain.User, do
 	confirmExpired := in.ConfirmWarnings || in.ConfirmExpired
 	confirmNotYet := in.ConfirmWarnings || in.ConfirmNotYetValid
 	confirmMismatch := in.ConfirmWarnings || in.ConfirmDomainMismatch
+	confirmCA := in.ConfirmWarnings || in.ConfirmCAMismatch
+
+	linkedCAs, err := s.linkedCAs(ctx, s.Store, d.ID)
+	if err != nil {
+		return nil, fmt.Errorf("upload certificate: %w", err)
+	}
+	caMismatch := len(linkedCAs) > 0 && !caMatches(linkedCAs, parsed.Leaf, parsed.Chain)
 
 	var problems []CertProblem
 	if parsed.Expired && !confirmExpired {
@@ -161,6 +174,13 @@ func (s *Services) UploadCertificate(ctx context.Context, actor *domain.User, do
 			Code: CertProblemDomainMismatch,
 			Message: fmt.Sprintf("certificate does not cover domain %q (CN=%q SANs=%v)",
 				d.FQDN, parsed.SubjectCN, parsed.SANs),
+		})
+	}
+	if caMismatch && !confirmCA {
+		problems = append(problems, CertProblem{
+			Code: CertProblemCAMismatch,
+			Message: fmt.Sprintf("certificate is not signed by any linked CA (%s)",
+				strings.Join(linkedCANames(linkedCAs), ", ")),
 		})
 	}
 	if len(problems) > 0 {
@@ -254,6 +274,9 @@ func (s *Services) UploadCertificate(ctx context.Context, actor *domain.User, do
 				return err
 			}
 		}
+		if err := s.syncCAMismatchEvent(ctx, tx, d, cert, linkedCAs, caMismatch); err != nil {
+			return err
+		}
 		chainKey := DedupKey(EvCertChainInvalid, d.ID.String())
 		if parsed.ChainWarning != "" {
 			if err := s.emit(ctx, tx, &domain.Event{
@@ -297,6 +320,7 @@ func (s *Services) UploadCertificate(ctx context.Context, actor *domain.User, do
 			"fingerprint":               cert.FingerprintSHA256,
 			"version":                   dc.Version,
 			"domain_mismatch_confirmed": !covers,
+			"ca_mismatch_confirmed":     caMismatch,
 			"expired_confirmed":         parsed.Expired,
 			"not_yet_valid_confirmed":   parsed.NotYetValid,
 		})
@@ -448,13 +472,37 @@ func (s *Services) certVisible(ctx context.Context, actor *domain.User, certID u
 	if err != nil {
 		return false, err
 	}
+	visible := make(map[uuid.UUID]struct{}, len(ids))
 	for _, id := range ids {
+		visible[id] = struct{}{}
 		dcs, err := s.Store.ListDomainCertificates(ctx, id)
 		if err != nil {
 			return false, err
 		}
 		for _, dc := range dcs {
 			if dc.CertificateID == certID {
+				return true, nil
+			}
+		}
+	}
+	// Managed certificates linked to a readable domain.
+	mcs, err := s.Store.ListManagedCertificates(ctx, store.ManagedCertFilter{})
+	if err != nil {
+		return false, err
+	}
+	for _, mc := range mcs {
+		if mc.DomainID == nil {
+			continue
+		}
+		if _, ok := visible[*mc.DomainID]; !ok {
+			continue
+		}
+		mvs, err := s.Store.ListManagedCertificateVersions(ctx, mc.ID)
+		if err != nil {
+			return false, err
+		}
+		for _, mv := range mvs {
+			if mv.CertificateID == certID {
 				return true, nil
 			}
 		}

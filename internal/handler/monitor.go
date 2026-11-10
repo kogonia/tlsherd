@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -18,11 +19,14 @@ func (h *Handler) listEndpoints(w http.ResponseWriter, r *http.Request, u *domai
 }
 
 type createEndpointRequest struct {
-	ServerID uuid.UUID  `json:"server_id"`
-	DomainID *uuid.UUID `json:"domain_id"`
-	Host     string     `json:"host"`
-	Port     int        `json:"port"`
-	Enabled  *bool      `json:"enabled"`
+	ServerID      uuid.UUID  `json:"server_id"`
+	DomainID      *uuid.UUID `json:"domain_id"`
+	Host          string     `json:"host"`
+	Port          int        `json:"port"`
+	Enabled       *bool      `json:"enabled"`
+	CheckInterval string     `json:"check_interval"`
+	DialAddr      string     `json:"dial_addr"`
+	ClientCertID  *uuid.UUID `json:"client_cert_id"`
 }
 
 func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request, u *domain.User) {
@@ -39,9 +43,13 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request, u *doma
 }
 
 type patchEndpointRequest struct {
-	Host    *string `json:"host"`
-	Port    *int    `json:"port"`
-	Enabled *bool   `json:"enabled"`
+	Host          *string `json:"host"`
+	Port          *int    `json:"port"`
+	Enabled       *bool   `json:"enabled"`
+	CheckInterval *string `json:"check_interval"`
+	DialAddr      *string `json:"dial_addr"`
+	// ClientCertID is a raw value so that an explicit null clears the certificate.
+	ClientCertID json.RawMessage `json:"client_cert_id"`
 }
 
 func (h *Handler) updateEndpoint(w http.ResponseWriter, r *http.Request, u *domain.User) {
@@ -53,7 +61,19 @@ func (h *Handler) updateEndpoint(w http.ResponseWriter, r *http.Request, u *doma
 	if !h.decodeJSON(w, r, &req, false) {
 		return
 	}
-	out, err := h.svc.UpdateEndpoint(r.Context(), u, id, service.EndpointPatch(req))
+	patch := service.EndpointPatch{
+		Host: req.Host, Port: req.Port, Enabled: req.Enabled,
+		CheckInterval: req.CheckInterval, DialAddr: req.DialAddr,
+	}
+	if len(req.ClientCertID) > 0 {
+		if string(req.ClientCertID) == "null" {
+			patch.ClearClientCert = true
+		} else if err := json.Unmarshal(req.ClientCertID, &patch.ClientCertID); err != nil {
+			h.badRequest(w, "invalid client_cert_id")
+			return
+		}
+	}
+	out, err := h.svc.UpdateEndpoint(r.Context(), u, id, patch)
 	if err != nil {
 		h.fail(w, r, err)
 		return

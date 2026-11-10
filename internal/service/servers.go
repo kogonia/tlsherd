@@ -546,6 +546,35 @@ func validateAssignmentPath(label, p string) error {
 	return nil
 }
 
+// validateInstallAssignment validates the install mode, target paths and
+// restart override shared by domain and managed-certificate server
+// assignments. It returns the restart override to store (nil when unset).
+func validateInstallAssignment(mode string, paths map[string]string, restart json.RawMessage) (json.RawMessage, error) {
+	switch mode {
+	case "", "symlink", "copy":
+	default:
+		return nil, invalidf("install_mode must be symlink or copy")
+	}
+	for label, p := range paths {
+		if err := validateAssignmentPath(label, p); err != nil {
+			return nil, err
+		}
+	}
+	if len(restart) == 0 || string(restart) == "null" {
+		return nil, nil
+	}
+	var r agentcfg.Restart
+	if err := json.Unmarshal(restart, &r); err != nil {
+		return nil, invalidf("restart_override: %s", err.Error())
+	}
+	check := agentcfg.Default()
+	check.Restart = r
+	if err := agentcfg.Validate(check); err != nil {
+		return nil, invalidf("restart_override: %s", err.Error())
+	}
+	return restart, nil
+}
+
 // ListDomainServers lists the servers assigned to a domain. Requires can_read on the domain.
 func (s *Services) ListDomainServers(ctx context.Context, actor *domain.User, domainID uuid.UUID) ([]domain.DomainServer, error) {
 	if err := s.requireDomainPerm(ctx, actor, domainID, permRead); err != nil {
@@ -565,38 +594,20 @@ func (s *Services) UpsertDomainServer(ctx context.Context, actor *domain.User, d
 	if err := s.requireDomainPerm(ctx, actor, domainID, permWriteConfig); err != nil {
 		return nil, err
 	}
-	switch in.InstallMode {
-	case "", "symlink", "copy":
-	default:
-		return nil, invalidf("install_mode must be symlink or copy")
-	}
-	for label, p := range map[string]string{
+	var err error
+	in.RestartOverride, err = validateInstallAssignment(in.InstallMode, map[string]string{
 		"cert_path": in.CertPath, "key_path": in.KeyPath,
 		"chain_path": in.ChainPath, "fullchain_path": in.FullchainPath,
-	} {
-		if err := validateAssignmentPath(label, p); err != nil {
-			return nil, err
-		}
-	}
-	if len(in.RestartOverride) > 0 && string(in.RestartOverride) != "null" {
-		var r agentcfg.Restart
-		if err := json.Unmarshal(in.RestartOverride, &r); err != nil {
-			return nil, invalidf("restart_override: %s", err.Error())
-		}
-		check := agentcfg.Default()
-		check.Restart = r
-		if err := agentcfg.Validate(check); err != nil {
-			return nil, invalidf("restart_override: %s", err.Error())
-		}
-	} else {
-		in.RestartOverride = nil
+	}, in.RestartOverride)
+	if err != nil {
+		return nil, err
 	}
 	ds := &domain.DomainServer{
 		DomainID: domainID, ServerID: serverID, InstallMode: in.InstallMode,
 		CertPath: in.CertPath, KeyPath: in.KeyPath, ChainPath: in.ChainPath,
 		FullchainPath: in.FullchainPath, RestartOverride: in.RestartOverride,
 	}
-	err := s.Store.Tx(ctx, func(tx store.Store) error {
+	err = s.Store.Tx(ctx, func(tx store.Store) error {
 		if _, err := tx.GetDomain(ctx, domainID); err != nil {
 			return err
 		}

@@ -256,6 +256,8 @@ const (
 	EvCertNotYetValidUploadOK = "cert_not_yet_valid_upload_confirmed"
 	EvCertUploadRejected      = "cert_upload_rejected"
 	EvCertRollback            = "cert_rollback_performed"
+	EvCertCAMismatch          = "cert_ca_mismatch"
+	EvManagedCertChangeOK     = "managed_cert_identity_change_confirmed"
 	EvAgentEnrollPending      = "agent_enroll_pending"
 	EvAgentAccepted           = "agent_accepted"
 	EvAgentRejected           = "agent_rejected"
@@ -298,6 +300,7 @@ var instantEventTypes = map[string]struct{}{
 	EvCertDomainMismatchOK:    {},
 	EvCertExpiredUploadOK:     {},
 	EvCertNotYetValidUploadOK: {},
+	EvManagedCertChangeOK:     {},
 }
 
 // IsInstantEvent reports whether typ is a point-in-time event (no open lifecycle).

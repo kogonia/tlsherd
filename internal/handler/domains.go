@@ -182,6 +182,7 @@ func (h *Handler) uploadCertificate(w http.ResponseWriter, r *http.Request, u *d
 	if !boolForm("confirm_domain_mismatch", &in.ConfirmDomainMismatch) ||
 		!boolForm("confirm_expired", &in.ConfirmExpired) ||
 		!boolForm("confirm_not_yet_valid", &in.ConfirmNotYetValid) ||
+		!boolForm("confirm_ca_mismatch", &in.ConfirmCAMismatch) ||
 		!boolForm("confirm_warnings", &in.ConfirmWarnings) {
 		return
 	}

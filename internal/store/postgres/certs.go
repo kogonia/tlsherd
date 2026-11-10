@@ -60,7 +60,8 @@ func (s *Store) UpsertCertificate(ctx context.Context, c *domain.Certificate) er
 		    key_algo = EXCLUDED.key_algo,
 		    key_bits = EXCLUDED.key_bits,
 		    cert_path = EXCLUDED.cert_path,
-		    key_path = EXCLUDED.key_path,
+		    key_path = CASE WHEN EXCLUDED.key_path <> '' THEN EXCLUDED.key_path
+		                    ELSE certificates.key_path END,
 		    chain_path = EXCLUDED.chain_path
 		RETURNING id, uploaded_at, uploaded_by`,
 		newID(c.ID), c.FingerprintSHA256, c.SubjectCN, sansJSON, c.IssuerCN, c.Serial,
@@ -81,7 +82,7 @@ func (s *Store) GetCertificate(ctx context.Context, id uuid.UUID) (*domain.Certi
 }
 
 // DeleteCertificate removes a certificate row. It returns domain.ErrCertificateInUse
-// when domain_certificates still references it.
+// when domain_certificates or managed_certificate_versions still reference it.
 func (s *Store) DeleteCertificate(ctx context.Context, id uuid.UUID) error {
 	tag, err := s.q.Exec(ctx, `DELETE FROM certificates WHERE id = $1`, id)
 	if err != nil {
@@ -96,11 +97,13 @@ func (s *Store) DeleteCertificate(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// CertificateInUse reports whether the certificate is current for any domain.
+// CertificateInUse reports whether the certificate is current for any domain
+// or managed certificate.
 func (s *Store) CertificateInUse(ctx context.Context, id uuid.UUID) (bool, error) {
 	var inUse bool
-	err := s.q.QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM domain_certificates WHERE certificate_id = $1 AND is_current)`,
+	err := s.q.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM domain_certificates WHERE certificate_id = $1 AND is_current)
+		    OR EXISTS (SELECT 1 FROM managed_certificate_versions WHERE certificate_id = $1 AND is_current)`,
 		id).Scan(&inUse)
 	return inUse, mapErr("certificate in use", err)
 }
@@ -227,11 +230,14 @@ func (s *Store) DeleteDomainCertificateVersion(ctx context.Context, domainID uui
 	return certID, nil
 }
 
-// CertificateReferenced reports whether any domain history row still points at id.
+// CertificateReferenced reports whether any domain or managed certificate
+// history row still points at id.
 func (s *Store) CertificateReferenced(ctx context.Context, id uuid.UUID) (bool, error) {
 	var ref bool
-	err := s.q.QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM domain_certificates WHERE certificate_id = $1)`, id).Scan(&ref)
+	err := s.q.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM domain_certificates WHERE certificate_id = $1)
+		    OR EXISTS (SELECT 1 FROM managed_certificate_versions WHERE certificate_id = $1)`,
+		id).Scan(&ref)
 	return ref, mapErr("certificate referenced", err)
 }
 

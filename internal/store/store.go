@@ -61,6 +61,7 @@ type Store interface {
 	GetCertificateByFingerprint(ctx context.Context, fp string) (*domain.Certificate, error)
 	GetCertificate(ctx context.Context, id uuid.UUID) (*domain.Certificate, error)
 	DeleteCertificate(ctx context.Context, id uuid.UUID) error
+	// CertificateInUse reports whether id is the current certificate of a domain or managed certificate.
 	CertificateInUse(ctx context.Context, id uuid.UUID) (bool, error)
 	ListExpiringCertificates(ctx context.Context, before time.Time) ([]domain.Certificate, error)
 
@@ -70,9 +71,31 @@ type Store interface {
 	GetDomainCertificateByVersion(ctx context.Context, domainID uuid.UUID, version int) (*domain.DomainCertificate, error)
 	// DeleteDomainCertificateVersion removes a non-current history row; returns its certificate_id.
 	DeleteDomainCertificateVersion(ctx context.Context, domainID uuid.UUID, version int) (certificateID uuid.UUID, err error)
-	// CertificateReferenced reports whether any domain_certificates row points at id.
+	// CertificateReferenced reports whether any domain_certificates or
+	// managed_certificate_versions row points at id.
 	CertificateReferenced(ctx context.Context, id uuid.UUID) (bool, error)
 	MaxDomainCertVersion(ctx context.Context, domainID uuid.UUID) (int, error)
+
+	// Managed certificates (CA, allowed_client, mtls_client)
+	CreateManagedCertificate(ctx context.Context, m *domain.ManagedCertificate) error
+	GetManagedCertificate(ctx context.Context, id uuid.UUID) (*domain.ManagedCertificate, error)
+	GetManagedCertificateByName(ctx context.Context, name string) (*domain.ManagedCertificate, error)
+	ListManagedCertificates(ctx context.Context, filter ManagedCertFilter) ([]domain.ManagedCertificate, error)
+	UpdateManagedCertificate(ctx context.Context, m *domain.ManagedCertificate) error
+	// DeleteManagedCertificate removes the managed certificate with its versions and
+	// server assignments; underlying certificates rows are left for the caller to prune.
+	DeleteManagedCertificate(ctx context.Context, id uuid.UUID) error
+	// ActivateManagedCertificateVersion makes mv current (see ActivateDomainCertificate).
+	ActivateManagedCertificateVersion(ctx context.Context, mv *domain.ManagedCertificateVersion) error
+	ListManagedCertificateVersions(ctx context.Context, managedCertID uuid.UUID) ([]domain.ManagedCertificateVersion, error)
+	GetCurrentManagedCertificateVersion(ctx context.Context, managedCertID uuid.UUID) (*domain.ManagedCertificateVersion, error)
+	MaxManagedCertVersion(ctx context.Context, managedCertID uuid.UUID) (int, error)
+
+	UpsertManagedCertServer(ctx context.Context, ms *domain.ManagedCertServer) error
+	DeleteManagedCertServer(ctx context.Context, managedCertID, serverID uuid.UUID) error
+	GetManagedCertServer(ctx context.Context, managedCertID, serverID uuid.UUID) (*domain.ManagedCertServer, error)
+	ListManagedCertServersByCert(ctx context.Context, managedCertID uuid.UUID) ([]domain.ManagedCertServer, error)
+	ListManagedCertServersByServer(ctx context.Context, serverID uuid.UUID) ([]domain.ManagedCertServer, error)
 
 	// Servers / enrollment
 	CreateServer(ctx context.Context, s *domain.Server) error
@@ -168,6 +191,12 @@ type Store interface {
 	UpdateNotificationOutbox(ctx context.Context, o *domain.NotificationOutbox) error
 	ListEventNotifications(ctx context.Context, eventIDs []int64) (map[int64][]domain.EventNotification, error)
 	GetOutboxWithDestination(ctx context.Context, id int64) (*domain.NotificationOutbox, *domain.NotificationDestination, *domain.NotificationAccount, error)
+}
+
+// ManagedCertFilter selects managed certificates; zero fields match everything.
+type ManagedCertFilter struct {
+	Kind     string
+	DomainID *uuid.UUID
 }
 
 type EventFilter struct {

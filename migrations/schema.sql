@@ -72,7 +72,7 @@ CREATE TABLE certificates (
     key_algo            text NOT NULL DEFAULT '',
     key_bits            int NOT NULL DEFAULT 0,
     cert_path           text NOT NULL,
-    key_path            text NOT NULL,
+    key_path            text NOT NULL DEFAULT '',
     chain_path          text NOT NULL DEFAULT '',
     uploaded_at         timestamptz NOT NULL DEFAULT now(),
     uploaded_by         uuid REFERENCES users(id) ON DELETE SET NULL
@@ -180,6 +180,52 @@ CREATE TABLE domain_servers (
     PRIMARY KEY (domain_id, server_id)
 );
 
+CREATE TABLE managed_certificates (
+    id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    name            text NOT NULL UNIQUE,
+    display_name    text NOT NULL DEFAULT '',
+    kind            text NOT NULL
+                    CHECK (kind IN ('ca', 'allowed_client', 'mtls_client')),
+    domain_id       uuid REFERENCES domains(id) ON DELETE SET NULL,
+    notes           text NOT NULL DEFAULT '',
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    updated_at      timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX managed_certificates_domain_idx ON managed_certificates(domain_id);
+CREATE INDEX managed_certificates_kind_idx ON managed_certificates(kind);
+
+CREATE TABLE managed_certificate_versions (
+    id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    managed_cert_id     uuid NOT NULL REFERENCES managed_certificates(id) ON DELETE CASCADE,
+    certificate_id      uuid NOT NULL REFERENCES certificates(id) ON DELETE RESTRICT,
+    version             int NOT NULL,
+    is_current          boolean NOT NULL DEFAULT false,
+    activated_at        timestamptz NOT NULL DEFAULT now(),
+    deactivated_at      timestamptz,
+    activated_by        uuid REFERENCES users(id) ON DELETE SET NULL,
+    reason              text NOT NULL DEFAULT '',
+    UNIQUE (managed_cert_id, version)
+);
+
+CREATE UNIQUE INDEX managed_certificate_versions_current_idx
+    ON managed_certificate_versions(managed_cert_id) WHERE is_current;
+
+CREATE TABLE managed_cert_servers (
+    managed_cert_id     uuid NOT NULL REFERENCES managed_certificates(id) ON DELETE CASCADE,
+    server_id           uuid NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    install_mode        text NOT NULL DEFAULT 'symlink'
+                        CHECK (install_mode IN ('symlink', 'copy')),
+    cert_path           text NOT NULL DEFAULT '',
+    key_path            text NOT NULL DEFAULT '',
+    chain_path          text NOT NULL DEFAULT '',
+    fullchain_path      text NOT NULL DEFAULT '',
+    restart_override    jsonb,
+    created_at          timestamptz NOT NULL DEFAULT now(),
+    updated_at          timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (managed_cert_id, server_id)
+);
+
 CREATE TABLE server_endpoints (
     id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     server_id       uuid NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
@@ -187,6 +233,9 @@ CREATE TABLE server_endpoints (
     host            text NOT NULL,
     port            int NOT NULL DEFAULT 443,
     enabled         boolean NOT NULL DEFAULT true,
+    check_interval  text NOT NULL DEFAULT '',
+    dial_addr       text NOT NULL DEFAULT '',
+    client_cert_id  uuid REFERENCES managed_certificates(id) ON DELETE SET NULL,
     created_at      timestamptz NOT NULL DEFAULT now(),
     UNIQUE (server_id, domain_id, host, port)
 );

@@ -270,6 +270,12 @@ func (s *Services) resolveAuditEntityLabel(ctx context.Context, entityType, enti
 				return c.FingerprintSHA256
 			}
 		}
+	case "managed_certificate":
+		if id, err := uuid.Parse(entityID); err == nil {
+			if mc, err := s.Store.GetManagedCertificate(ctx, id); err == nil && mc != nil {
+				return mc.Name
+			}
+		}
 	case "notification_account":
 		if id, err := uuid.Parse(entityID); err == nil {
 			if a, err := s.Store.GetNotificationAccount(ctx, id); err == nil && a != nil {

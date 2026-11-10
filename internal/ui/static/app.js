@@ -1090,13 +1090,14 @@
 
   pages.domain = async function (root) {
     const base = '/domains/' + ID;
-    const parts = {head: slot(), upload: slot(), versions: slot(), assign: slot()};
-    root.replaceChildren(parts.head, parts.upload, parts.versions, parts.assign);
+    const parts = {head: slot(), upload: slot(), versions: slot(), assign: slot(), related: slot()};
+    root.replaceChildren(parts.head, parts.upload, parts.versions, parts.assign, parts.related);
 
     const reload = () => Promise.all([
       loadInto(parts.head, headSection),
       loadInto(parts.versions, versionsSection),
       loadInto(parts.assign, assignSection),
+      loadInto(parts.related, relatedManagedSection),
     ]);
 
     async function headSection() {
@@ -1167,6 +1168,7 @@
             fd.set('confirm_domain_mismatch', 'true');
             fd.set('confirm_expired', 'true');
             fd.set('confirm_not_yet_valid', 'true');
+            fd.set('confirm_ca_mismatch', 'true');
             await send();
           }
           toast(res.unchanged ? 'Certificate already current; nothing changed' : 'Uploaded version ' + res.domain_certificate.version, 'ok');
@@ -1335,6 +1337,25 @@
         h('div', {class: 'toolbar'}, button('Add server', openAdd, 'primary')),
         table(['Server', 'Mode', 'Cert', 'Key', 'Chain', 'Fullchain', 'Restart override', ''], rows, 'Not assigned to any server.'),
         editorHost);
+    }
+
+    async function relatedManagedSection() {
+      if (!IS_ADMIN) return h('div', null);
+      const list = (await api('GET', '/managed-certificates?domain_id=' + encodeURIComponent(ID))) || [];
+      const rows = list.map((m) => {
+        const c = m.current_certificate;
+        return [
+          link('/managed-certificates/' + m.id, m.display_name || m.name),
+          badge(managedKindLabel(m.kind), m.kind === 'mtls_client' ? 'info' : ''),
+          c ? expiryBadge(c.not_after) : muted('no cert'),
+          m.has_key ? badge('key', 'ok') : muted('no key'),
+        ];
+      });
+      return section('Related managed certificates',
+        h('p', {class: 'help'},
+          'Linked CAs are used to verify this domain’s server certificate. Allowed clients document inbound mTLS identities. Our mTLS clients are outbound credentials.'),
+        table(['Certificate', 'Kind', 'Expires', 'Key'], rows, 'No managed certificates linked to this domain.'),
+        h('p', null, link('/managed-certificates', 'Manage certificates →')));
     }
 
     await reload();
@@ -1889,6 +1910,308 @@
     await reload();
   };
 
+  // ---- managed certificates
+
+  const MANAGED_KINDS = [
+    ['ca', 'CA (trust anchor)'],
+    ['allowed_client', 'Allowed client (inbound mTLS)'],
+    ['mtls_client', 'Our mTLS client (outbound)'],
+  ];
+  function managedKindLabel(k) {
+    return (MANAGED_KINDS.find((x) => x[0] === k) || [k, k])[1];
+  }
+
+  async function uploadManagedPEM(id, form, confirmFlags) {
+    const fd = new FormData(form);
+    if (!form.chain || !form.chain.files.length) fd.delete('chain');
+    if (!form.key || !form.key.files.length) fd.delete('key');
+    (confirmFlags || []).forEach((f) => fd.set(f, 'true'));
+    return api('POST', '/managed-certificates/' + id + '/certificates', fd);
+  }
+
+  pages['managed-certs'] = async function (root) {
+    const state = {limit: 25, offset: 0};
+    const list = h('div', null);
+    let cache = [];
+    const kindFilter = select('kind', [['', 'all kinds']].concat(MANAGED_KINDS), '');
+    const search = liveSearch({
+      freeText: true, placeholder: 'Search name…',
+      onChange() { state.offset = 0; renderList(); },
+    });
+    const pager = pagerBar(state, () => renderList());
+    kindFilter.addEventListener('change', () => { state.offset = 0; refresh(); });
+
+    const name = input('name', '', {required: true, pattern: '[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?', placeholder: 'partner-api-ca'});
+    const display = input('display_name', '', {placeholder: 'Partner API CA'});
+    const kind = select('kind', MANAGED_KINDS, 'ca');
+    const notes = h('textarea', {name: 'notes', rows: 2}, '');
+    const createForm = h('form', null,
+      h('div', {class: 'row'},
+        field('Name (slug)', name, 'Path-safe slug; used as agent install dir for mtls_client.'),
+        field('Display name', display),
+        field('Kind', kind)),
+      field('Notes', notes),
+      h('p', null, h('button', {type: 'submit', class: 'primary'}, 'Create')));
+    createForm.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      let created;
+      if (await act(createForm.querySelector('button'), async () => {
+        created = await api('POST', '/managed-certificates', {
+          name: name.value.trim(), display_name: display.value.trim(),
+          kind: kind.value, notes: notes.value,
+        });
+      }, 'Created')) location.href = '/managed-certificates/' + created.id;
+    });
+
+    root.replaceChildren(
+      h('div', {class: 'toolbar'},
+        h('label', {class: 'inline'}, 'Kind ', kindFilter),
+        search.node,
+        button('Refresh', () => refresh())),
+      section('Managed certificates', pager.bar, list),
+      section('New managed certificate',
+        h('p', {class: 'help'}, 'CA and allowed client are cert-only (partner trust / inbound mTLS). Our mTLS client needs a private key and can be deployed by agents.'),
+        createForm));
+
+    function renderList() {
+      return loadInto(list, async () => {
+        const q = (search.value() || '').toLowerCase().trim();
+        const filtered = cache.filter((m) => {
+          if (q && !(m.name + ' ' + (m.display_name || '') + ' ' + (m.notes || '')).toLowerCase().includes(q)) return false;
+          return true;
+        });
+        search.setItems(cache.map((m) => ({value: m.id, label: m.display_name || m.name, search: m.name + ' ' + (m.display_name || '')})));
+        const page = pageItems(filtered, state);
+        pager.update(page.length, filtered.length);
+        const rows = page.map((m) => {
+          const c = m.current_certificate;
+          return [
+            link('/managed-certificates/' + m.id, m.display_name || m.name),
+            code(m.name),
+            badge(managedKindLabel(m.kind), m.kind === 'mtls_client' ? 'info' : ''),
+            m.domain_fqdn ? link('/domains/' + m.domain_id, m.domain_fqdn) : muted('—'),
+            c ? expiryBadge(c.not_after) : muted('no cert'),
+            m.has_key ? badge('key', 'ok') : muted('no key'),
+            String((m.server_ids || []).length),
+          ];
+        });
+        return table(['Certificate', 'Slug', 'Kind', 'Domain', 'Expires', 'Key', 'Servers'], rows, 'No managed certificates yet.');
+      });
+    }
+
+    async function refresh() {
+      const q = kindFilter.value ? '?kind=' + encodeURIComponent(kindFilter.value) : '';
+      cache = (await api('GET', '/managed-certificates' + q)) || [];
+      await renderList();
+    }
+    await refresh();
+  };
+
+  pages['managed-cert'] = async function (root) {
+    const base = '/managed-certificates/' + ID;
+    const head = slot();
+    const upload = slot();
+    const versions = slot();
+    const assign = slot();
+    root.replaceChildren(head, upload, versions, assign);
+
+    const reload = () => Promise.all([
+      loadInto(head, headSection),
+      loadInto(versions, versionsSection),
+      loadInto(assign, assignSection),
+    ]);
+
+    async function headSection() {
+      const [m, domains] = await Promise.all([api('GET', base), api('GET', '/domains')]);
+      document.querySelector('#app h1').textContent = m.display_name || m.name;
+      const c = m.current_certificate;
+      const display = input('display_name', m.display_name || '');
+      const notes = h('textarea', {name: 'notes', rows: 2}, '');
+      notes.value = m.notes || '';
+      const domainOpts = [['', '— none —']].concat((domains || []).map((d) => [d.id, d.fqdn]));
+      const domainSel = select('domain_id', domainOpts, m.domain_id || '');
+      const info = h('dl', {class: 'kv'},
+        h('dt', null, 'Slug'), h('dd', null, code(m.name)),
+        h('dt', null, 'Kind'), h('dd', null, badge(managedKindLabel(m.kind), m.kind === 'mtls_client' ? 'info' : '')),
+        h('dt', null, 'Key'), h('dd', null, m.has_key ? badge('present', 'ok') : muted('none')),
+        h('dt', null, 'Current'), h('dd', null, c ? ['v' + m.current_version, ' · ', expiryBadge(c.not_after), ' · ', code(shortFp(c.fingerprint_sha256))] : muted('no certificate')),
+        c ? [h('dt', null, 'Subject'), h('dd', null, c.subject_cn || '—'),
+          h('dt', null, 'Issuer'), h('dd', null, c.issuer_cn || '—')] : null);
+      const save = button('Save', async (b) => {
+        const body = {display_name: display.value, notes: notes.value};
+        if (domainSel.value) body.domain_id = domainSel.value;
+        else body.domain_id = null;
+        if (await act(b, () => api('PATCH', base, body), 'Saved')) reload();
+      }, 'primary');
+      const del = button('Delete', async (b) => {
+        if (!confirm('Delete managed certificate ' + m.name + '?')) return;
+        if (await act(b, () => api('DELETE', base), 'Deleted')) location.href = '/managed-certificates';
+      }, 'danger');
+      return section(m.display_name || m.name, info,
+        h('div', {class: 'row'}, field('Display name', display), field('Linked domain', domainSel)),
+        field('Notes', notes),
+        h('p', null, btns(save, del)));
+    }
+
+    (function () {
+      const needsKey = true; // UI always shows key; server enforces by kind
+      const form = h('form', null,
+        h('div', {class: 'row'},
+          field('Certificate (PEM)', h('input', {type: 'file', name: 'cert', required: true, accept: '.pem,.crt,.cer'})),
+          field('Private key (PEM)', h('input', {type: 'file', name: 'key', accept: '.pem,.key'}), 'Required for mtls_client; omit for CA / allowed client.'),
+          field('Chain (PEM, optional)', h('input', {type: 'file', name: 'chain', accept: '.pem,.crt,.cer'}))),
+        field('Reason', input('reason', '', {placeholder: 'optional'})),
+        h('p', null, h('button', {type: 'submit', class: 'primary'}, 'Upload / replace')));
+      form.addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        const b = form.querySelector('button');
+        b.disabled = true;
+        try {
+          const send = (flags) => uploadManagedPEM(ID, form, flags);
+          let res;
+          try {
+            res = await send([]);
+          } catch (e) {
+            if (!(e instanceof ApiError) || e.code !== 'confirmation_required') throw e;
+            const problems = (e.details && e.details.problems) || [];
+            const msg = 'This certificate needs confirmation:\n\n' +
+              problems.map((p) => '• ' + (p.message || p.code)).join('\n') +
+              '\n\nSave anyway?';
+            if (!confirm(msg)) return;
+            res = await send(['confirm_warnings', 'confirm_identity_change', 'confirm_expired', 'confirm_not_yet_valid']);
+          }
+          toast(res.unchanged ? 'Already current' : 'Uploaded version ' + (res.version && res.version.version), 'ok');
+          form.reset();
+          reload();
+        } catch (e) {
+          toast(errMsg(e), 'error');
+        } finally {
+          b.disabled = false;
+        }
+      });
+      void needsKey;
+      upload.replaceChildren(section('Upload certificate', form));
+    })();
+
+    async function versionsSection() {
+      const vs = (await api('GET', base + '/versions')) || [];
+      const rows = vs.map((v) => {
+        const c = v.certificate || {};
+        return [
+          'v' + v.version,
+          v.is_current ? badge('current', 'ok') : '',
+          code(shortFp(c.fingerprint_sha256 || '')),
+          c.subject_cn || '',
+          expiryBadge(c.not_after),
+          fmt(v.activated_at),
+          v.reason || '',
+        ];
+      });
+      return section('Versions', table(['Version', '', 'Fingerprint', 'Subject', 'Expires', 'Activated', 'Reason'], rows, 'No certificate uploaded yet.'));
+    }
+
+    async function assignSection() {
+      const m = await api('GET', base);
+      if (m.kind !== 'mtls_client') {
+        return section('Servers', h('p', {class: 'muted'}, 'Server deployment is only available for our outbound mTLS client certificates.'));
+      }
+      const [assigns, srv] = await Promise.all([api('GET', base + '/servers'), serversById()]);
+      const assigned = assigns || [];
+      const assignedIds = new Set(assigned.map((a) => a.server_id));
+      const editorHost = h('div', null);
+
+      function closeEditor() { editorHost.replaceChildren(); }
+
+      function openEditor(a) {
+        const locked = !!a;
+        const available = locked
+          ? [{id: a.server_id, label: serverLabel(srv.map.get(a.server_id) || {id: a.server_id})}]
+          : srv.list.filter((s) => !assignedIds.has(s.id)).map((s) => ({id: s.id, label: serverLabel(s)}));
+        if (!available.length) { toast('No servers available', 'error'); return; }
+        const initial = a || {};
+        const sSel = select('server_id', available.map((s) => [s.id, s.label]), initial.server_id || available[0].id);
+        if (locked) sSel.disabled = true;
+        const mode = select('install_mode', [['', 'agent default'], ['symlink', 'symlink'], ['copy', 'copy']], initial.install_mode || '');
+        const inputs = {
+          cert_path: input('cert_path', initial.cert_path || ''),
+          key_path: input('key_path', initial.key_path || ''),
+          chain_path: input('chain_path', initial.chain_path || ''),
+          fullchain_path: input('fullchain_path', initial.fullchain_path || ''),
+        };
+        const form = h('form', null,
+          h('div', {class: 'row'}, field('Server', locked ? h('div', null, available[0].label) : sSel), field('Install mode', mode)),
+          h('div', {class: 'row'},
+            field('Cert path', inputs.cert_path), field('Key path', inputs.key_path),
+            field('Chain path', inputs.chain_path), field('Fullchain path', inputs.fullchain_path)),
+          h('p', null, btns(
+            h('button', {type: 'submit', class: 'primary'}, locked ? 'Save' : 'Add'),
+            button('Cancel', closeEditor))));
+        form.addEventListener('submit', async (ev) => {
+          ev.preventDefault();
+          const sid = locked ? a.server_id : sSel.value;
+          const body = {
+            install_mode: mode.value,
+            cert_path: inputs.cert_path.value.trim(),
+            key_path: inputs.key_path.value.trim(),
+            chain_path: inputs.chain_path.value.trim(),
+            fullchain_path: inputs.fullchain_path.value.trim(),
+          };
+          if (await act(form.querySelector('button[type=submit]'),
+            () => api('PUT', base + '/servers/' + sid, body), 'Assignment saved')) reload();
+        });
+        editorHost.replaceChildren(h('div', {class: 'editor-panel'},
+          h('div', {class: 'card-head'}, h('h3', null, locked ? 'Edit assignment' : 'Add server')), form));
+      }
+
+      const rows = assigned.map((a) => {
+        const s = srv.map.get(a.server_id);
+        return [
+          link('/servers/' + a.server_id, s ? serverLabel(s) : a.server_id),
+          a.install_mode || muted('default'),
+          a.cert_path || muted('default'), a.key_path || muted('default'),
+          a.fullchain_path || muted('default'),
+          btns(
+            button('Edit', () => openEditor(a)),
+            button('Remove', async (b) => {
+              if (!confirm('Stop deploying this client cert to the server?')) return;
+              if (await act(b, () => api('DELETE', base + '/servers/' + a.server_id), 'Removed')) reload();
+            }, 'danger')),
+        ];
+      });
+      return section('Servers',
+        h('div', {class: 'toolbar'}, button('Add server', () => openEditor(null), 'primary')),
+        table(['Server', 'Mode', 'Cert', 'Key', 'Fullchain', ''], rows, 'Not assigned to any server.'),
+        editorHost);
+    }
+
+    await reload();
+  };
+
+  // ---- monitor settings
+
+  pages['monitor-settings'] = async function (root) {
+    const cur = await api('GET', '/settings/monitor');
+    const interval = input('interval', cur.interval || '5m', {placeholder: '5m'});
+    const timeout = input('timeout', cur.timeout || '10s', {placeholder: '10s'});
+    const soon = input('expiring_soon', cur.expiring_soon || '720h', {placeholder: '720h'});
+    const form = h('form', null,
+      h('p', {class: 'help'}, 'Global monitor defaults. Individual endpoints may override the check interval.'),
+      h('div', {class: 'row'},
+        field('Check interval', interval, 'How often enabled endpoints are probed (30s–24h).'),
+        field('Probe timeout', timeout, 'Per-probe dial/handshake timeout (1s–2m, ≤ interval).'),
+        field('Expiring soon', soon, 'Warn when a certificate expires within this window (1h–365d).')),
+      h('p', null, h('button', {type: 'submit', class: 'primary'}, 'Save')));
+    form.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      if (await act(form.querySelector('button'), () => api('PUT', '/settings/monitor', {
+        interval: interval.value.trim(),
+        timeout: timeout.value.trim(),
+        expiring_soon: soon.value.trim(),
+      }), 'Monitor settings saved')) location.reload();
+    });
+    root.replaceChildren(section('Monitor settings', form));
+  };
+
   // ---- agent defaults
 
   pages.defaults = async function (root) {
@@ -2136,14 +2459,19 @@
     resultsSection.hidden = true;
     const formSlot = h('div', null);
     const dnsSlot = h('div', {class: 'dns-rows'});
+    const editHost = h('div', null);
     const pager = pagerBar(state, () => refresh(false));
-    root.replaceChildren(summary, filterBar, section('Endpoints', pager.bar, list), resultsSection,
+    root.replaceChildren(summary, filterBar, section('Endpoints', pager.bar, list), editHost, resultsSection,
       section('New endpoint', formSlot, dnsSlot));
 
-    const [srv, domains] = await Promise.all([serversById(), api('GET', '/domains')]);
+    const [srv, domains, mtlsClients] = await Promise.all([
+      serversById(), api('GET', '/domains'),
+      IS_ADMIN ? api('GET', '/managed-certificates?kind=mtls_client').catch(() => []) : Promise.resolve([]),
+    ]);
     const dmap = new Map((domains || []).map((d) => [d.id, d]));
     const domainOpts = (domains || []).map((d) => [d.id, d.fqdn]);
     const serverOpts = srv.list.map((s) => [s.id, serverLabel(s)]);
+    const mtlsOpts = [['', '— none —']].concat((mtlsClients || []).map((m) => [m.id, m.display_name || m.name]));
     let endpointsCache = [];
 
     const filterServer = select('filter_server', [['', 'all servers']].concat(serverOpts), '');
@@ -2180,10 +2508,18 @@
       const dSel = select('domain_id', [['', '— select —']].concat(domainOpts), (prefill && prefill.domain_id) || '');
       const host = input('host', (prefill && prefill.host) || '', {required: true, placeholder: 'www or www.example.com'});
       const port = input('port', String((prefill && prefill.port) || 443), {type: 'number', min: 1, max: 65535, required: true});
+      const interval = input('check_interval', (prefill && prefill.check_interval) || '', {placeholder: 'default (global)'});
+      const dial = input('dial_addr', (prefill && prefill.dial_addr) || '', {placeholder: 'agent last IP (default)'});
+      const clientSel = select('client_cert_id', mtlsOpts, (prefill && prefill.client_cert_id) || '');
       const addBtn = h('button', {type: 'button', class: 'primary'}, 'Add endpoint');
       const dnsBtn = h('button', {type: 'button'}, 'DNS check');
-      const row = h('div', {class: 'row endpoint-add-row'},
-        field('Server', sSel), field('Host', host), field('Domain', dSel), field('Port', port),
+      const row = h('div', {class: 'endpoint-add-row'},
+        h('div', {class: 'row'},
+          field('Server', sSel), field('Host', host), field('Domain', dSel), field('Port', port)),
+        h('div', {class: 'row'},
+          field('Check interval', interval, 'Optional Go duration override, e.g. 1m.'),
+          field('Dial address', dial, 'Optional host/IP instead of agent last IP (partner targets).'),
+          field('mTLS client cert', clientSel, 'Our outbound client cert to present.')),
         h('div', {class: 'btns endpoint-add-actions'}, addBtn, dnsBtn));
 
       // ensureDomainSelected auto-fills domain from host suffix when unset.
@@ -2215,15 +2551,20 @@
           ep.server_id === sSel.value &&
           ep.domain_id === dSel.value &&
           String(ep.host || '').toLowerCase() === fqdn &&
-          Number(ep.port) === p);
+          Number(ep.port) === p &&
+          !(prefill && prefill.id && ep.id === prefill.id));
         if (dup) {
           toast('Endpoint already exists for this server, host, domain, and port', 'error');
           return null;
         }
-        return {
+        const body = {
           server_id: sSel.value, domain_id: dSel.value, host: fqdn,
           port: p, enabled: true,
+          check_interval: interval.value.trim(),
+          dial_addr: dial.value.trim(),
         };
+        if (clientSel.value) body.client_cert_id = clientSel.value;
+        return body;
       }
 
       async function addOne(silent) {
@@ -2400,6 +2741,7 @@
                 l.latency_ms != null ? ' · ' + l.latency_ms + ' ms' : ''))
               : muted('—'),
             btns(
+              button('Edit', () => openEdit(ep)),
               button('Check now', async (b) => {
                 if (await act(b, () => api('POST', '/monitor/endpoints/' + ep.id + '/check'), 'Check finished')) refresh();
               }),
@@ -2416,6 +2758,47 @@
         return table(['Endpoint', 'Server', 'Domain', 'Issue', 'Latest', ''], rows, 'No endpoints. Add one below.');
       });
     }
+
+    function openEdit(ep) {
+      const host = input('host', ep.host || '');
+      const port = input('port', String(ep.port || 443), {type: 'number', min: 1, max: 65535});
+      const interval = input('check_interval', ep.check_interval || '', {placeholder: 'default (global)'});
+      const dial = input('dial_addr', ep.dial_addr || '', {placeholder: 'agent last IP (default)'});
+      const clientSel = select('client_cert_id', mtlsOpts, ep.client_cert_id || '');
+      const enabled = h('input', {type: 'checkbox', checked: !!ep.enabled});
+      const form = h('form', null,
+        h('div', {class: 'row'},
+          field('Host', host), field('Port', port),
+          h('label', {class: 'check'}, enabled, 'enabled')),
+        h('div', {class: 'row'},
+          field('Check interval', interval),
+          field('Dial address', dial),
+          field('mTLS client cert', clientSel)),
+        h('p', null, btns(
+          h('button', {type: 'submit', class: 'primary'}, 'Save'),
+          button('Cancel', () => editHost.replaceChildren()))));
+      form.addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        const body = {
+          host: host.value.trim(),
+          port: Number(port.value) || 443,
+          enabled: enabled.checked,
+          check_interval: interval.value.trim(),
+          dial_addr: dial.value.trim(),
+          client_cert_id: clientSel.value ? clientSel.value : null,
+        };
+        if (await act(form.querySelector('button[type=submit]'),
+          () => api('PATCH', '/monitor/endpoints/' + ep.id, body), 'Endpoint saved')) {
+          editHost.replaceChildren();
+          refresh();
+        }
+      });
+      editHost.replaceChildren(h('div', {class: 'editor-panel'},
+        h('div', {class: 'card-head'}, h('h3', null, 'Edit ' + ep.host + ':' + ep.port)),
+        form));
+      editHost.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+    }
+
     await refresh();
   };
 

@@ -29,6 +29,12 @@ const (
 	settingMonitor         = "monitor"
 )
 
+// Per-endpoint check interval bounds (the worker ticks once a minute).
+const (
+	minCheckInterval = 30 * time.Second
+	maxCheckInterval = 7 * 24 * time.Hour
+)
+
 // EndpointInput describes a new monitored endpoint.
 type EndpointInput struct {
 	ServerID uuid.UUID
@@ -36,6 +42,12 @@ type EndpointInput struct {
 	Host     string
 	Port     int
 	Enabled  *bool
+	// CheckInterval is a Go duration overriding the global interval (empty = global).
+	CheckInterval string
+	// DialAddr is a host or IP to dial instead of the server's last_ip (administrators only).
+	DialAddr string
+	// ClientCertID selects an mtls_client managed certificate presented during the handshake.
+	ClientCertID *uuid.UUID
 }
 
 // EndpointPatch holds optional endpoint changes.
@@ -43,6 +55,13 @@ type EndpointPatch struct {
 	Host    *string
 	Port    *int
 	Enabled *bool
+	// CheckInterval: nil leaves unchanged, "" resets to the global interval.
+	CheckInterval *string
+	// DialAddr: nil leaves unchanged, "" resets to the server's last_ip (administrators only).
+	DialAddr *string
+	// ClientCertID sets the mtls_client certificate; ClearClientCert removes it.
+	ClientCertID    *uuid.UUID
+	ClearClientCert bool
 }
 
 // EndpointView is an endpoint with its latest probe result.
@@ -106,6 +125,112 @@ func normalizeEndpointHost(host, domainFQDN string) (string, error) {
 	return validateHost(host + "." + domainFQDN)
 }
 
+// normalizeCheckInterval validates a per-endpoint interval; empty means "use global".
+func normalizeCheckInterval(v string) (string, error) {
+	v = normalizeText(v)
+	if v == "" {
+		return "", nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d < minCheckInterval || d > maxCheckInterval {
+		return "", invalidf("check_interval must be a duration between %s and %s", minCheckInterval, maxCheckInterval)
+	}
+	return d.String(), nil
+}
+
+// normalizeDialAddr validates a dial target: an IP address or a hostname
+// without port (the port comes from the endpoint). Empty means "use last_ip".
+func normalizeDialAddr(v string) (string, error) {
+	v = strings.ToLower(strings.TrimSuffix(normalizeText(v), "."))
+	if v == "" {
+		return "", nil
+	}
+	if addr, err := netip.ParseAddr(v); err == nil {
+		if addr.Zone() != "" {
+			return "", invalidf("invalid dial_addr")
+		}
+		return addr.Unmap().String(), nil
+	}
+	if strings.ContainsAny(v, ":[]") {
+		return "", invalidf("dial_addr must be a host or IP without port")
+	}
+	host, err := validateHost(v)
+	if err != nil {
+		return "", invalidf("invalid dial_addr")
+	}
+	return host, nil
+}
+
+// endpointInterval returns the effective check interval of ep.
+func endpointInterval(ep domain.ServerEndpoint, global time.Duration) time.Duration {
+	if ep.CheckInterval == "" {
+		return global
+	}
+	if d, err := time.ParseDuration(ep.CheckInterval); err == nil && d > 0 {
+		return d
+	}
+	return global
+}
+
+// validateClientCert checks that id is an mtls_client managed certificate with
+// a current version that holds a private key, and that actor may read it.
+func (s *Services) validateClientCert(ctx context.Context, st store.Store, actor *domain.User, id uuid.UUID) error {
+	mc, err := st.GetManagedCertificate(ctx, id)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return invalidf("client certificate does not exist")
+		}
+		return err
+	}
+	if mc.Kind != domain.ManagedKindMTLSClient {
+		return invalidf("client certificate must be an mtls_client managed certificate")
+	}
+	if err := s.requireManagedRead(ctx, actor, mc); err != nil {
+		return err
+	}
+	mv, err := st.GetCurrentManagedCertificateVersion(ctx, id)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return invalidf("client certificate has no uploaded version")
+		}
+		return err
+	}
+	c, err := st.GetCertificate(ctx, mv.CertificateID)
+	if err != nil {
+		return err
+	}
+	if c.KeyPath == "" {
+		return invalidf("client certificate has no private key")
+	}
+	return nil
+}
+
+// loadClientCertificate builds the TLS client certificate (leaf + chain +
+// private key) of the current version of an mtls_client managed certificate.
+func (s *Services) loadClientCertificate(ctx context.Context, id uuid.UUID) (tls.Certificate, error) {
+	mv, err := s.Store.GetCurrentManagedCertificateVersion(ctx, id)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	c, err := s.Store.GetCertificate(ctx, mv.CertificateID)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	var files [3][]byte
+	for i, name := range []string{certFileName, chainFileName, keyFileName} {
+		b, err := s.readCertFile(c.FingerprintSHA256, name)
+		if err != nil && !(name == chainFileName && errors.Is(err, domain.ErrNotFound)) {
+			return tls.Certificate{}, err
+		}
+		files[i] = b
+	}
+	pair, err := tls.X509KeyPair(append(files[0], files[1]...), files[2])
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("load key pair: %w", err)
+	}
+	return pair, nil
+}
+
 // ---------------------------------------------------------------------------
 // Endpoint CRUD
 
@@ -147,11 +272,23 @@ func (s *Services) CreateEndpoint(ctx context.Context, actor *domain.User, in En
 	if port < 1 || port > 65535 {
 		return nil, invalidf("port must be 1-65535")
 	}
-	ep := &domain.ServerEndpoint{ServerID: in.ServerID, DomainID: in.DomainID, Port: port, Enabled: true}
+	ep := &domain.ServerEndpoint{
+		ServerID: in.ServerID, DomainID: in.DomainID, Port: port, Enabled: true, ClientCertID: in.ClientCertID,
+	}
 	if in.Enabled != nil {
 		ep.Enabled = *in.Enabled
 	}
-	err := s.Store.Tx(ctx, func(tx store.Store) error {
+	var err error
+	if ep.CheckInterval, err = normalizeCheckInterval(in.CheckInterval); err != nil {
+		return nil, err
+	}
+	if ep.DialAddr, err = normalizeDialAddr(in.DialAddr); err != nil {
+		return nil, err
+	}
+	if ep.DialAddr != "" && !isAdmin(actor) {
+		return nil, forbiddenf("dial_addr can only be set by administrators")
+	}
+	err = s.Store.Tx(ctx, func(tx store.Store) error {
 		if _, err := tx.GetServer(ctx, in.ServerID); err != nil {
 			if errors.Is(err, domain.ErrNotFound) {
 				return invalidf("server does not exist")
@@ -183,14 +320,21 @@ func (s *Services) CreateEndpoint(ctx context.Context, actor *domain.User, in En
 				return forbiddenf("server is not assigned to this domain")
 			}
 		}
+		if ep.ClientCertID != nil {
+			if err := s.validateClientCert(ctx, tx, actor, *ep.ClientCertID); err != nil {
+				return err
+			}
+		}
 		if err := tx.CreateEndpoint(ctx, ep); err != nil {
 			if errors.Is(err, domain.ErrConflict) {
 				return conflictf("endpoint already exists for this server, host, domain, and port")
 			}
 			return err
 		}
-		return s.audit(ctx, tx, actor, "endpoint.create", "endpoint", ep.ID.String(),
-			map[string]any{"host": ep.Host, "port": port, "server_id": in.ServerID})
+		return s.audit(ctx, tx, actor, "endpoint.create", "endpoint", ep.ID.String(), map[string]any{
+			"host": ep.Host, "port": port, "server_id": in.ServerID, "check_interval": ep.CheckInterval,
+			"dial_addr": ep.DialAddr, "client_cert_id": ep.ClientCertID,
+		})
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create endpoint: %w", err)
@@ -236,15 +380,50 @@ func (s *Services) UpdateEndpoint(ctx context.Context, actor *domain.User, id uu
 		if p.Enabled != nil {
 			ep.Enabled = *p.Enabled
 		}
+		if p.CheckInterval != nil {
+			if ep.CheckInterval, err = normalizeCheckInterval(*p.CheckInterval); err != nil {
+				return err
+			}
+		}
+		dialCleared := false
+		if p.DialAddr != nil {
+			dial, err := normalizeDialAddr(*p.DialAddr)
+			if err != nil {
+				return err
+			}
+			if dial != ep.DialAddr {
+				if err := requireAdmin(actor); err != nil {
+					return forbiddenf("dial_addr can only be changed by administrators")
+				}
+				dialCleared = dial == ""
+				ep.DialAddr = dial
+			}
+		}
+		switch {
+		case p.ClientCertID != nil:
+			if err := s.validateClientCert(ctx, tx, actor, *p.ClientCertID); err != nil {
+				return err
+			}
+			ep.ClientCertID = p.ClientCertID
+		case p.ClearClientCert:
+			ep.ClientCertID = nil
+		}
 		if err := tx.UpdateEndpoint(ctx, ep); err != nil {
 			if errors.Is(err, domain.ErrConflict) {
 				return conflictf("endpoint already exists for this server, host, domain, and port")
 			}
 			return err
 		}
+		if dialCleared {
+			if err := s.resolveExpiryEvents(ctx, tx, endpointEntity(id), "endpoint_updated"); err != nil {
+				return err
+			}
+		}
 		out = ep
-		return s.audit(ctx, tx, actor, "endpoint.update", "endpoint", id.String(),
-			map[string]any{"host": ep.Host, "port": ep.Port, "enabled": ep.Enabled})
+		return s.audit(ctx, tx, actor, "endpoint.update", "endpoint", id.String(), map[string]any{
+			"host": ep.Host, "port": ep.Port, "enabled": ep.Enabled, "check_interval": ep.CheckInterval,
+			"dial_addr": ep.DialAddr, "client_cert_id": ep.ClientCertID,
+		})
 	})
 	if err != nil {
 		return nil, fmt.Errorf("update endpoint: %w", err)
@@ -326,6 +505,9 @@ func (s *Services) DeleteEndpoint(ctx context.Context, actor *domain.User, id uu
 			if err := s.resolve(ctx, tx, DedupKey(t, id.String()), "endpoint_deleted"); err != nil {
 				return err
 			}
+		}
+		if err := s.resolveExpiryEvents(ctx, tx, endpointEntity(id), "endpoint_deleted"); err != nil {
+			return err
 		}
 		return s.audit(ctx, tx, actor, "endpoint.delete", "endpoint", id.String(), map[string]any{"host": ep.Host})
 	})
@@ -497,6 +679,9 @@ func (s *Services) CheckEndpoint(ctx context.Context, ep *domain.ServerEndpoint)
 	if err := s.resolve(ctx, s.Store, downKey, "monitor"); err != nil {
 		return nil, err
 	}
+	if err := s.syncPeerExpiry(ctx, ep, res, set); err != nil {
+		return nil, err
+	}
 
 	mismatchKey := DedupKey(EvEndpointCertMismatch, ep.ID.String())
 	if dom == nil || res.PeerFingerprint == nil {
@@ -532,9 +717,30 @@ func (s *Services) CheckEndpoint(ctx context.Context, ep *domain.ServerEndpoint)
 	return res, nil
 }
 
-// probe dials the server's last_ip and performs a TLS handshake with sni.
-// Chain verification is intentionally skipped: the monitor compares the served
-// leaf fingerprint with the expected one instead of trusting any CA.
+// endpointEntity is the dedup entity of peer expiry events of an endpoint.
+func endpointEntity(id uuid.UUID) string { return "endpoint:" + id.String() }
+
+// syncPeerExpiry raises or resolves cert_expired / cert_expiring_soon for the
+// certificate served by an endpoint that is probed through a custom dial_addr
+// (domain certificates are covered by ScanCertificates).
+func (s *Services) syncPeerExpiry(ctx context.Context, ep *domain.ServerEndpoint, res *domain.MonitorResult, set monitorSettings) error {
+	if ep.DialAddr == "" || res.PeerNotAfter == nil {
+		return nil
+	}
+	return s.syncExpiryEvents(ctx, expiryTarget{
+		Entity:   endpointEntity(ep.ID),
+		Label:    fmt.Sprintf("peer certificate of endpoint %s:%d (dial %s)", ep.Host, ep.Port, ep.DialAddr),
+		NotAfter: *res.PeerNotAfter,
+		DomainID: ep.DomainID, ServerID: &ep.ServerID,
+		Details: map[string]any{"endpoint_id": ep.ID, "host": ep.Host, "port": ep.Port, "dial_addr": ep.DialAddr},
+	}, set, s.now())
+}
+
+// probe dials ep.DialAddr (or the server's last_ip when unset) and performs a
+// TLS handshake with sni, presenting the endpoint's mtls_client certificate
+// when configured. Chain verification is intentionally skipped: the monitor
+// compares the served leaf fingerprint with the expected one instead of
+// trusting any CA.
 func (s *Services) probe(ctx context.Context, ep *domain.ServerEndpoint, srv *domain.Server, sni string, timeout time.Duration) *domain.MonitorResult {
 	res := &domain.MonitorResult{EndpointID: ep.ID, CheckedAt: s.now()}
 	fail := func(err error) *domain.MonitorResult {
@@ -542,28 +748,43 @@ func (s *Services) probe(ctx context.Context, ep *domain.ServerEndpoint, srv *do
 		res.Error = &msg
 		return res
 	}
-	if srv == nil || srv.LastIP == nil {
-		return fail(errors.New("server has no last_ip"))
+	target := ep.DialAddr
+	if target == "" {
+		if srv == nil || srv.LastIP == nil {
+			return fail(errors.New("server has no last_ip"))
+		}
+		target = srv.LastIP.String()
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	cfg := &tls.Config{
+		ServerName:         sni,
+		InsecureSkipVerify: true, //nolint:gosec // fingerprint comparison replaces chain verification
+		MinVersion:         tls.VersionTLS12,
+	}
+	if ep.ClientCertID != nil {
+		pair, err := s.loadClientCertificate(ctx, *ep.ClientCertID)
+		if err != nil {
+			return fail(fmt.Errorf("client certificate: %w", err))
+		}
+		cfg.Certificates = []tls.Certificate{pair}
+	}
+
 	start := time.Now()
 	var d net.Dialer
-	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(srv.LastIP.String(), strconv.Itoa(ep.Port)))
+	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(target, strconv.Itoa(ep.Port)))
 	if err != nil {
 		return fail(err)
 	}
 	defer conn.Close()
 	res.Reachable = true
-	ip := *srv.LastIP
-	res.ConnectedIP = &ip
+	if ap, err := netip.ParseAddrPort(conn.RemoteAddr().String()); err == nil {
+		ip := ap.Addr().Unmap()
+		res.ConnectedIP = &ip
+	}
 
-	tc := tls.Client(conn, &tls.Config{
-		ServerName:         sni,
-		InsecureSkipVerify: true, //nolint:gosec // fingerprint comparison replaces chain verification
-		MinVersion:         tls.VersionTLS12,
-	})
+	tc := tls.Client(conn, cfg)
 	if err := tc.HandshakeContext(ctx); err != nil {
 		return fail(err)
 	}
@@ -603,7 +824,7 @@ func (s *Services) MonitorTick(ctx context.Context) {
 	for i := range eps {
 		ep := eps[i]
 		last, err := s.Store.LatestMonitorResult(ctx, ep.ID)
-		if err == nil && s.now().Sub(last.CheckedAt) < set.Interval {
+		if err == nil && s.now().Sub(last.CheckedAt) < endpointInterval(ep, set.Interval) {
 			skipped++
 			continue
 		}
@@ -639,8 +860,9 @@ func (s *Services) MonitorTick(ctx context.Context) {
 }
 
 // ScanCertificates raises cert_expired / cert_expiring_soon for the current
-// certificate of every domain (and resolves them when no longer true), and
-// domain_ungrouped for domains without groups.
+// certificate of every domain and managed certificate (and resolves them when
+// no longer true), cert_ca_mismatch for domains whose leaf does not chain to a
+// linked CA, and domain_ungrouped for domains without groups.
 func (s *Services) ScanCertificates(ctx context.Context) error {
 	set := s.monitorSettings(ctx)
 	domains, err := s.Store.ListDomains(ctx)
@@ -683,6 +905,9 @@ func (s *Services) ScanCertificates(ctx context.Context) error {
 		}
 		expKey := DedupKey(EvCertExpired, d.ID.String())
 		soonKey := DedupKey(EvCertExpiringSoon, d.ID.String())
+		if err := s.scanDomainCA(ctx, &d, cert); err != nil {
+			return fmt.Errorf("scan certificates: %w", err)
+		}
 		left := cert.NotAfter.Sub(now)
 		switch {
 		case left <= 0:
@@ -719,7 +944,7 @@ func (s *Services) ScanCertificates(ctx context.Context) error {
 			}
 		}
 	}
-	return nil
+	return s.ScanManagedCertificates(ctx)
 }
 
 // agentOfflineFactor is how many poll intervals of silence mark an agent offline.

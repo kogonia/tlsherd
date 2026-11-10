@@ -42,7 +42,8 @@ func TestPagesRender(t *testing.T) {
 	id := uuid.NewString()
 	for _, p := range []string{
 		"/", "/enrollments", "/groups", "/domains", "/domains/" + id, "/servers", "/servers/" + id,
-		"/settings/agent-defaults", "/settings/notifications", "/notification-accounts",
+		"/managed-certificates", "/managed-certificates/" + id,
+		"/settings/agent-defaults", "/settings/monitor", "/settings/notifications", "/notification-accounts",
 		"/notification-accounts/new", "/notification-accounts/" + id, "/events", "/users", "/monitor", "/account",
 	} {
 		rec := get(h, p, "admin-token")

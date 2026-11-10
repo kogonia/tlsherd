@@ -26,6 +26,21 @@ Compose extras: `TLSHERD_ADMIN_PORT` / `TLSHERD_AGENT_PORT` (published host port
 Admin and agent APIs use **separate TCP listeners** so firewalls can expose only the
 agent port to managed hosts while keeping the UI/API on a private network.
 
+## Monitor
+
+Configured in the UI (**Settings → Monitor**). Stored as `system_settings.monitor`
+(JSON). Defaults if unset: `interval=5m`, `timeout=10s`, `expiring_soon=720h`.
+
+| Field | Meaning |
+| --- | --- |
+| `interval` | Global how often enabled endpoints are probed (overridable per endpoint) |
+| `timeout` | Per-probe dial/handshake timeout (must be ≤ interval) |
+| `expiring_soon` | Window for `cert_expiring_soon` / peer-expiry warnings |
+
+Endpoints may set `check_interval`, `dial_addr` (probe a host/IP instead of the
+agent’s last IP), and `client_cert_id` (present an outbound `mtls_client` managed
+certificate).
+
 ## Notifications
 
 Configured in the UI (**Notifications** for SMTP/Telegram/worker;

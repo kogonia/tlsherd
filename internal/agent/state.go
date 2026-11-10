@@ -23,14 +23,39 @@ type State struct {
 	APIKey        string                 `json:"api_key,omitempty"`
 	ConfigVersion int64                  `json:"config_version"`
 	Domains       map[string]DomainState `json:"domains,omitempty"`
-	LastError     string                 `json:"last_error,omitempty"`
-	LastSuccess   time.Time              `json:"last_success,omitempty"`
+	// ClientCerts tracks mtls_client managed certificates by name.
+	ClientCerts map[string]DomainState `json:"client_certs,omitempty"`
+	LastError   string                 `json:"last_error,omitempty"`
+	LastSuccess time.Time              `json:"last_success,omitempty"`
 }
 
 // DomainState tracks what is applied and what is staged for one domain.
 type DomainState struct {
 	Fingerprint       string `json:"fingerprint,omitempty"`
 	StagedFingerprint string `json:"staged_fingerprint,omitempty"`
+}
+
+// certState returns the tracked state of an assignment (domain or client certificate).
+func (st *State) certState(asg Assignment) DomainState {
+	if asg.clientCert {
+		return st.ClientCerts[asg.FQDN] // nil map reads are fine
+	}
+	return st.Domains[asg.FQDN]
+}
+
+// setCertState records the state of an assignment, allocating maps lazily.
+func (st *State) setCertState(asg Assignment, ds DomainState) {
+	if asg.clientCert {
+		if st.ClientCerts == nil {
+			st.ClientCerts = map[string]DomainState{}
+		}
+		st.ClientCerts[asg.FQDN] = ds
+		return
+	}
+	if st.Domains == nil {
+		st.Domains = map[string]DomainState{}
+	}
+	st.Domains[asg.FQDN] = ds
 }
 
 // loadState reads state.json. A missing file yields an empty state. A corrupt

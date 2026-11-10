@@ -72,6 +72,12 @@ type storedCertPaths struct{ Cert, Key, Chain string }
 // immutable: if it already exists it is reused untouched, so a private key is
 // never duplicated or overwritten. The write is atomic (temp dir + rename)
 // and fsynced.
+//
+// A bundle without a private key (p.KeyPEM empty, e.g. CA or allowed_client
+// managed certificates) is stored cert-only: no key file is written and an
+// existing certificate directory is enough. If the directory exists without a
+// key and a key is supplied later, the key is added to it. The returned Key
+// path is empty when the directory holds no key.
 func (s *Services) writeCertFiles(p *certutil.Parsed) (storedCertPaths, error) {
 	dir, err := s.certDir(p.Fingerprint)
 	if err != nil {
@@ -82,8 +88,23 @@ func (s *Services) writeCertFiles(p *certutil.Parsed) (storedCertPaths, error) {
 		Key:   filepath.Join(dir, keyFileName),
 		Chain: filepath.Join(dir, chainFileName),
 	}
-	if fileExists(paths.Cert) && fileExists(paths.Key) {
-		return paths, nil
+	hasKey := len(p.KeyPEM) > 0
+	if fileExists(paths.Cert) {
+		switch {
+		case fileExists(paths.Key):
+			return paths, nil
+		case !hasKey:
+			paths.Key = ""
+			return paths, nil
+		default:
+			if err := writeFileSync(paths.Key, p.KeyPEM, keyMode); err != nil {
+				return storedCertPaths{}, err
+			}
+			return paths, nil
+		}
+	}
+	if !hasKey {
+		paths.Key = ""
 	}
 	root := s.certsRoot()
 	if err := os.MkdirAll(root, dirMode); err != nil {
@@ -113,9 +134,15 @@ func (s *Services) writeCertFiles(p *certutil.Parsed) (storedCertPaths, error) {
 		mode fs.FileMode
 	}{
 		{certFileName, p.CertPEM, certMode},
-		{keyFileName, p.KeyPEM, keyMode},
 		{chainFileName, p.ChainPEM, certMode},
 		{metaFileName, meta, certMode},
+	}
+	if hasKey {
+		files = append(files, struct {
+			name string
+			data []byte
+			mode fs.FileMode
+		}{keyFileName, p.KeyPEM, keyMode})
 	}
 	for _, f := range files {
 		if err := writeFileSync(filepath.Join(tmp, f.name), f.data, f.mode); err != nil {
@@ -130,7 +157,7 @@ func (s *Services) writeCertFiles(p *certutil.Parsed) (storedCertPaths, error) {
 	}
 	if err := os.Rename(tmp, dir); err != nil {
 		// A concurrent upload of the same certificate won the race.
-		if fileExists(paths.Cert) && fileExists(paths.Key) {
+		if fileExists(paths.Cert) && (!hasKey || fileExists(paths.Key)) {
 			return paths, nil
 		}
 		return storedCertPaths{}, fmt.Errorf("publish cert dir: %w", err)

@@ -62,9 +62,15 @@ Layers (`handler → service → store`, no reverse dependencies):
   priority; server UI can queue an update that the agent pulls). (2) **Schedule**
   `config.cfg` — poll/window/backups/post-check (server-authoritative). Details:
   [Agent guide](docs/agent.md).
-- **Certificates.** Leaf or fullchain PEM; key must match. Immutable versions + rollback.
-  Files under `<data_dir>/certs/<sha256>/` and `<data_dir>/domains/<fqdn>/current`.
-- **Monitor.** Probes endpoints; events for down / expiry / fingerprint mismatch.
+- **Certificates.** Leaf or fullchain PEM; key must match for domain server certs. Immutable
+  versions + rollback. Files under `<data_dir>/certs/<sha256>/` and
+  `<data_dir>/domains/<fqdn>/current`.
+- **Managed certificates.** Inventory outside domain deploy: `ca` / `allowed_client`
+  (cert-only) and `mtls_client` (cert+key, agent-deployable). Optional domain link; linked
+  CAs are checked against the domain leaf. Expiry scanning and confirm-on-identity-change
+  apply. See [Operations](docs/operations.md).
+- **Monitor.** Probes endpoints (agent last IP or custom dial address; optional mTLS client
+  cert); global settings + per-endpoint interval; events for down / expiry / mismatch.
 - **Events.** Open alarms close on success or **Dismiss**. Instant types are stored resolved.
 - **Notifications.** Non-login accounts (email / Telegram / webhook), scopes, working hours.
   Open + resolve delivery with duration. See [Server configuration](docs/configuration.md).
@@ -72,8 +78,9 @@ Layers (`handler → service → store`, no reverse dependencies):
 ### Web UI
 
 Served at `/` by the same binary; no frontend build step. Pages include Dashboard,
-Enrollments, Domains, Servers (tabbed: Server / Endpoints / **Agent local config** /
-Schedule), Agent defaults, Notifications, Events, Groups, Users, Monitor, Account.
+Enrollments, Domains, Managed certs, Servers (tabbed: Server / Domains / Endpoints /
+**Agent local config** / Schedule), Agent defaults, Monitor settings, Notifications,
+Events, Groups, Users, Monitor, Account.
 
 ## Threat model
 

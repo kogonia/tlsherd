@@ -119,6 +119,75 @@ func Fingerprint(der []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// PublicKeyFingerprint returns SHA-256 of the leaf SubjectPublicKeyInfo DER.
+func PublicKeyFingerprint(cert *x509.Certificate) (string, error) {
+	if cert == nil {
+		return "", errors.New("nil certificate")
+	}
+	der, err := x509.MarshalPKIXPublicKey(cert.PublicKey)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(der)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+// ParseCertOnly parses a certificate (and optional chain) without a private key.
+// Used for CA and allowed_client managed certificates.
+func ParseCertOnly(certPEM, chainPEM []byte, now time.Time) (*Parsed, error) {
+	leaf, fromCert, err := parseCerts(certPEM)
+	if err != nil {
+		return nil, fmt.Errorf("cert: %w", err)
+	}
+	chain := append([]*x509.Certificate{}, fromCert...)
+	if len(chainPEM) > 0 {
+		extra, _, err := parseAllCerts(chainPEM)
+		if err != nil {
+			return nil, fmt.Errorf("chain: %w", err)
+		}
+		chain = append(chain, extra...)
+	}
+	expired := leaf.NotAfter.Before(now)
+	notYet := leaf.NotBefore.After(now.Add(24 * time.Hour))
+	fp := Fingerprint(leaf.Raw)
+	sans := collectSANs(leaf)
+	algo, bits := pubKeyInfo(leaf.PublicKey)
+	warn := ""
+	if len(chain) == 0 {
+		warn = "chain empty"
+	} else if err := leaf.CheckSignatureFrom(chain[0]); err != nil {
+		warn = "chain issuer mismatch: " + err.Error()
+	}
+	return &Parsed{
+		Leaf: leaf, Chain: chain, Fingerprint: fp, SANs: sans,
+		SubjectCN: leaf.Subject.CommonName, IssuerCN: leaf.Issuer.CommonName,
+		Serial: leaf.SerialNumber.Text(16), NotBefore: leaf.NotBefore.UTC(), NotAfter: leaf.NotAfter.UTC(),
+		KeyAlgo: algo, KeyBits: bits, CertPEM: encodeCertPEM(leaf), ChainPEM: encodeCertsPEM(chain),
+		ChainWarning: warn, Expired: expired, NotYetValid: notYet,
+	}, nil
+}
+
+// SignedBy reports whether leaf is signed by issuer (direct CheckSignatureFrom).
+func SignedBy(leaf, issuer *x509.Certificate) bool {
+	if leaf == nil || issuer == nil {
+		return false
+	}
+	return leaf.CheckSignatureFrom(issuer) == nil
+}
+
+func pubKeyInfo(pub crypto.PublicKey) (string, int) {
+	switch k := pub.(type) {
+	case *rsa.PublicKey:
+		return "RSA", k.N.BitLen()
+	case *ecdsa.PublicKey:
+		return "ECDSA", k.Curve.Params().BitSize
+	case ed25519.PublicKey:
+		return "Ed25519", 256
+	default:
+		return "", 0
+	}
+}
+
 // CriticalProblems lists soft parse issues that should block install when
 // strict_cert_check is enabled. Key mismatch already fails ParseBundle.
 func (p *Parsed) CriticalProblems() []string {

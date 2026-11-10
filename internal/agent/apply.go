@@ -43,6 +43,37 @@ func (a *Agent) syncDomains(ctx context.Context, assigned []Assignment) error {
 	return errors.Join(errs...)
 }
 
+// syncClientCerts reconciles every assigned mtls_client managed certificate
+// (mirrors syncDomains; the managed certificate name is the install directory
+// under cert_root). A per-certificate failure does not stop the others;
+// ErrUnauthorized aborts.
+func (a *Agent) syncClientCerts(ctx context.Context, assigned []ClientCertAssignment) error {
+	var errs []error
+	for _, cc := range assigned {
+		asg := cc.assignment()
+		if err := a.processDomain(ctx, asg); err != nil {
+			if errors.Is(err, ErrUnauthorized) {
+				return err
+			}
+			errs = append(errs, fmt.Errorf("client cert %s: %w", cc.Name, err))
+		}
+		if ctx.Err() != nil {
+			errs = append(errs, ctx.Err())
+			break
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// forAssignment targets the result at a client certificate (client_cert
+// instead of domain) when asg is one.
+func (r ApplyResult) forAssignment(asg Assignment) ApplyResult {
+	if asg.clientCert {
+		r.FQDN, r.ClientCert = "", asg.FQDN
+	}
+	return r
+}
+
 func (a *Agent) processDomain(ctx context.Context, asg Assignment) error {
 	rt := a.runtimeCFG()
 	l, err := newLayout(a.certRoot(), asg.FQDN)
@@ -52,7 +83,7 @@ func (a *Agent) processDomain(ctx context.Context, asg Assignment) error {
 	if !validFingerprint(asg.Fingerprint) {
 		return fmt.Errorf("invalid assigned fingerprint %q", asg.Fingerprint)
 	}
-	ds := a.state.Domains[asg.FQDN]
+	ds := a.state.certState(asg)
 	// Trust the live install under <cert_root>/<fqdn>/current, not state alone.
 	// state.json can claim a fingerprint while an operator wiped symlinks or
 	// restored older PEMs; skipping then would leave the host forever stale.
@@ -61,7 +92,7 @@ func (a *Agent) processDomain(ctx context.Context, asg Assignment) error {
 		if ds.Fingerprint != asg.Fingerprint || ds.StagedFingerprint != "" {
 			ds.Fingerprint = asg.Fingerprint
 			ds.StagedFingerprint = ""
-			a.state.Domains[asg.FQDN] = ds
+			a.state.setCertState(asg, ds)
 			a.saveState()
 		}
 		a.log.Debug("domain already current", "operation", "process", "domain", asg.FQDN, "fingerprint", asg.Fingerprint)
@@ -71,10 +102,10 @@ func (a *Agent) processDomain(ctx context.Context, asg Assignment) error {
 		a.log.Info("state matches assignment but installed files do not; re-applying",
 			"operation", "process", "domain", asg.FQDN, "fingerprint", asg.Fingerprint, "installed", installed)
 		ds.Fingerprint = installed // report/backup previous from disk when known
-		a.state.Domains[asg.FQDN] = ds
+		a.state.setCertState(asg, ds)
 	} else if ds.Fingerprint == "" && installed != "" {
 		ds.Fingerprint = installed
-		a.state.Domains[asg.FQDN] = ds
+		a.state.setCertState(asg, ds)
 	}
 
 	now := a.clock.Now()
@@ -134,7 +165,8 @@ func (a *Agent) fetchValidated(ctx context.Context, l layout, asg Assignment) (*
 	if p.Fingerprint != asg.Fingerprint {
 		return nil, fmt.Errorf("validate: fingerprint mismatch (got %s)", p.Fingerprint)
 	}
-	if !certutil.CoversDomain(p.SANs, p.SubjectCN, asg.FQDN) {
+	// Client certificates identify us to a partner; they need not cover a hostname.
+	if !asg.clientCert && !certutil.CoversDomain(p.SANs, p.SubjectCN, asg.FQDN) {
 		return nil, errors.New("validate: certificate does not cover domain")
 	}
 	if a.runtimeCFG().StrictCertCheck {
@@ -156,7 +188,7 @@ func (a *Agent) stage(ctx context.Context, l layout, asg Assignment, ds DomainSt
 			"fingerprint", asg.Fingerprint)
 		return nil
 	}
-	res := ApplyResult{ApplyID: uuid.NewString(), FQDN: asg.FQDN, Fingerprint: asg.Fingerprint, PreviousFingerprint: ds.Fingerprint}
+	res := ApplyResult{ApplyID: uuid.NewString(), FQDN: asg.FQDN, Fingerprint: asg.Fingerprint, PreviousFingerprint: ds.Fingerprint}.forAssignment(asg)
 	p, err := a.fetchValidated(ctx, l, asg)
 	if err != nil {
 		return a.failed(ctx, res, "download_validate", err)
@@ -170,7 +202,7 @@ func (a *Agent) stage(ctx context.Context, l layout, asg Assignment, ds DomainSt
 		return a.failed(ctx, res, "stage", err)
 	}
 	ds.StagedFingerprint = asg.Fingerprint
-	a.state.Domains[asg.FQDN] = ds
+	a.state.setCertState(asg, ds)
 	a.saveState()
 	log.Info("staged outside maintenance window")
 	res.Status, res.Message = StatusStaged, "staged outside maintenance window"
@@ -200,17 +232,21 @@ func (a *Agent) spec(asg Assignment, p *certutil.Parsed) installSpec {
 	}
 	cn, kn, hn, fn := s.names()
 	certPath, keyPath, chainPath, fullPath := asg.CertPath, asg.KeyPath, asg.ChainPath, asg.FullchainPath
-	if certPath == "" {
-		certPath = a.local.CertPath
-	}
-	if keyPath == "" {
-		keyPath = a.local.KeyPath
-	}
-	if chainPath == "" {
-		chainPath = a.local.ChainPath
-	}
-	if fullPath == "" {
-		fullPath = a.local.FullchainPath
+	// The local target paths describe the served domain certificate; client
+	// certificates must never default onto them.
+	if !asg.clientCert {
+		if certPath == "" {
+			certPath = a.local.CertPath
+		}
+		if keyPath == "" {
+			keyPath = a.local.KeyPath
+		}
+		if chainPath == "" {
+			chainPath = a.local.ChainPath
+		}
+		if fullPath == "" {
+			fullPath = a.local.FullchainPath
+		}
 	}
 	for name, rel := range map[string]string{cn: certPath, kn: keyPath, hn: chainPath, fn: fullPath} {
 		if rel == "" {
@@ -231,7 +267,7 @@ func (a *Agent) apply(ctx context.Context, l layout, asg Assignment, ds DomainSt
 	ctx, cancel := context.WithTimeout(ctx, applyDeadline)
 	defer cancel()
 	log := a.log.With("domain", asg.FQDN, "fingerprint", asg.Fingerprint, "operation", "apply")
-	res := ApplyResult{ApplyID: uuid.NewString(), FQDN: asg.FQDN, Fingerprint: asg.Fingerprint, PreviousFingerprint: ds.Fingerprint, Details: map[string]any{"urgent": urgent}}
+	res := ApplyResult{ApplyID: uuid.NewString(), FQDN: asg.FQDN, Fingerprint: asg.Fingerprint, PreviousFingerprint: ds.Fingerprint, Details: map[string]any{"urgent": urgent}}.forAssignment(asg)
 
 	p, err := a.fetchValidated(ctx, l, asg)
 	if err != nil {
@@ -301,12 +337,13 @@ func (a *Agent) apply(ctx context.Context, l layout, asg Assignment, ds DomainSt
 	}
 
 	ds.Fingerprint, ds.StagedFingerprint = asg.Fingerprint, ""
-	a.state.Domains[asg.FQDN] = ds
+	a.state.setCertState(asg, ds)
 	a.state.LastSuccess = a.clock.Now().UTC()
 	a.saveState()
 
 	res.Status, res.Message = StatusApplied, "certificate applied"
-	if a.cfg.PostCheck.Enabled {
+	// The post-check compares the served domain certificate; it does not apply to client certificates.
+	if a.cfg.PostCheck.Enabled && !asg.clientCert {
 		if err := a.postCheck(ctx, asg); err != nil {
 			res.Status, res.Message = StatusPostCheckMismatch, err.Error()
 			log.Warn("post-check mismatch", "error", err)
@@ -336,7 +373,7 @@ func (a *Agent) failed(ctx context.Context, res ApplyResult, stage string, cause
 		res.Details = map[string]any{}
 	}
 	res.Details["stage"] = stage
-	a.log.Error("apply failed", "operation", "apply", "domain", res.FQDN, "fingerprint", res.Fingerprint, "status", res.Status, "stage", stage, "error", cause)
+	a.log.Error("apply failed", "operation", "apply", "domain", res.FQDN, "client_cert", res.ClientCert, "fingerprint", res.Fingerprint, "status", res.Status, "stage", stage, "error", cause)
 	return errors.Join(fmt.Errorf("%s: %w", stage, cause), a.report(ctx, res))
 }
 

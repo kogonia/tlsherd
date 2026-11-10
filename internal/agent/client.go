@@ -30,10 +30,10 @@ const (
 )
 
 type EnrollRequest struct {
-	Name            string              `json:"client_name,omitempty"`
-	Version         string              `json:"version,omitempty"`
+	Name            string               `json:"client_name,omitempty"`
+	Version         string               `json:"version,omitempty"`
 	LocalConfig     agentcfg.LocalConfig `json:"local_config,omitempty"`
-	LocalConfigHash string              `json:"local_config_hash,omitempty"`
+	LocalConfigHash string               `json:"local_config_hash,omitempty"`
 }
 
 // LocalConfigUpdate is a server push that the agent writes into agent.local.cfg.
@@ -68,25 +68,55 @@ type DomainReport struct {
 }
 
 type PollResponse struct {
-	ConfigVersion     int64              `json:"config_version"`
-	ConfigHash        string             `json:"config_hash,omitempty"`
-	Config            agentcfg.Config    `json:"config"`
-	Domains           []Assignment       `json:"domains"`
-	NewAPIKey         string             `json:"new_api_key,omitempty"`
-	LocalConfigUpdate *LocalConfigUpdate `json:"local_config_update,omitempty"`
+	ConfigVersion     int64                  `json:"config_version"`
+	ConfigHash        string                 `json:"config_hash,omitempty"`
+	Config            agentcfg.Config        `json:"config"`
+	Domains           []Assignment           `json:"domains"`
+	ClientCerts       []ClientCertAssignment `json:"client_certs,omitempty"`
+	NewAPIKey         string                 `json:"new_api_key,omitempty"`
+	LocalConfigUpdate *LocalConfigUpdate     `json:"local_config_update,omitempty"`
 }
 
-// Assignment is a domain certificate assigned to this server.
+// Assignment is a domain certificate assigned to this server. Client
+// certificates are processed through the same pipeline (see
+// ClientCertAssignment.assignment): FQDN then carries the managed
+// certificate name and clientCert is set.
 type Assignment struct {
-	FQDN        string            `json:"fqdn"`
-	Fingerprint string            `json:"fingerprint_sha256"`
-	NotAfter    time.Time         `json:"not_after"`
+	FQDN          string            `json:"fqdn"`
+	Fingerprint   string            `json:"fingerprint_sha256"`
+	NotAfter      time.Time         `json:"not_after"`
 	InstallMode   string            `json:"install_mode,omitempty"`
 	CertPath      string            `json:"cert_path,omitempty"`
 	KeyPath       string            `json:"key_path,omitempty"`
 	ChainPath     string            `json:"chain_path,omitempty"`
 	FullchainPath string            `json:"fullchain_path,omitempty"`
 	Restart       *agentcfg.Restart `json:"restart_override,omitempty"`
+
+	// clientCert marks an mtls_client managed certificate (never decoded from JSON).
+	clientCert bool
+}
+
+// ClientCertAssignment is an mtls_client managed certificate (cert + key)
+// assigned to this server. Name is the install directory under cert_root.
+type ClientCertAssignment struct {
+	Name          string            `json:"name"`
+	Fingerprint   string            `json:"fingerprint_sha256"`
+	NotAfter      time.Time         `json:"not_after"`
+	InstallMode   string            `json:"install_mode,omitempty"`
+	CertPath      string            `json:"cert_path,omitempty"`
+	KeyPath       string            `json:"key_path,omitempty"`
+	ChainPath     string            `json:"chain_path,omitempty"`
+	FullchainPath string            `json:"fullchain_path,omitempty"`
+	Restart       *agentcfg.Restart `json:"restart_override,omitempty"`
+}
+
+func (c ClientCertAssignment) assignment() Assignment {
+	return Assignment{
+		FQDN: c.Name, Fingerprint: c.Fingerprint, NotAfter: c.NotAfter,
+		InstallMode: c.InstallMode, CertPath: c.CertPath, KeyPath: c.KeyPath,
+		ChainPath: c.ChainPath, FullchainPath: c.FullchainPath, Restart: c.Restart,
+		clientCert: true,
+	}
 }
 
 // CertBundle is the GET /api/v1/agent/certs/{fingerprint} payload.
@@ -110,7 +140,8 @@ const (
 // ApplyResult is reported via POST /api/v1/agent/apply-result.
 type ApplyResult struct {
 	ApplyID             string         `json:"apply_id"`
-	FQDN                string         `json:"domain"`
+	FQDN                string         `json:"domain,omitempty"`
+	ClientCert          string         `json:"client_cert,omitempty"`
 	Fingerprint         string         `json:"fingerprint_sha256"`
 	PreviousFingerprint string         `json:"previous_fingerprint,omitempty"`
 	Status              string         `json:"status"`

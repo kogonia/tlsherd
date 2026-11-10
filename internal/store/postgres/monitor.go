@@ -11,21 +11,25 @@ const defaultResultsLimit = 100
 
 // Endpoints
 
-const endpointCols = `id, server_id, domain_id, host, port, enabled, created_at`
+const endpointCols = `id, server_id, domain_id, host, port, enabled, check_interval, dial_addr,
+	client_cert_id, created_at`
 
 func scanEndpoint(r rowScanner) (domain.ServerEndpoint, error) {
 	var e domain.ServerEndpoint
-	err := r.Scan(&e.ID, &e.ServerID, &e.DomainID, &e.Host, &e.Port, &e.Enabled, &e.CreatedAt)
+	err := r.Scan(&e.ID, &e.ServerID, &e.DomainID, &e.Host, &e.Port, &e.Enabled,
+		&e.CheckInterval, &e.DialAddr, &e.ClientCertID, &e.CreatedAt)
 	return e, err
 }
 
 func (s *Store) CreateEndpoint(ctx context.Context, e *domain.ServerEndpoint) error {
 	e.ID = newID(e.ID)
 	err := s.q.QueryRow(ctx, `
-		INSERT INTO server_endpoints (id, server_id, domain_id, host, port, enabled)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO server_endpoints (id, server_id, domain_id, host, port, enabled,
+			check_interval, dial_addr, client_cert_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING created_at`,
 		e.ID, e.ServerID, e.DomainID, e.Host, e.Port, e.Enabled,
+		e.CheckInterval, e.DialAddr, e.ClientCertID,
 	).Scan(&e.CreatedAt)
 	return mapErr("create endpoint", err)
 }
@@ -46,9 +50,11 @@ func (s *Store) GetEndpoint(ctx context.Context, id uuid.UUID) (*domain.ServerEn
 func (s *Store) UpdateEndpoint(ctx context.Context, e *domain.ServerEndpoint) error {
 	return execOne(ctx, s.q, "update endpoint", `
 		UPDATE server_endpoints
-		SET server_id = $2, domain_id = $3, host = $4, port = $5, enabled = $6
+		SET server_id = $2, domain_id = $3, host = $4, port = $5, enabled = $6,
+		    check_interval = $7, dial_addr = $8, client_cert_id = $9
 		WHERE id = $1`,
-		e.ID, e.ServerID, e.DomainID, e.Host, e.Port, e.Enabled)
+		e.ID, e.ServerID, e.DomainID, e.Host, e.Port, e.Enabled,
+		e.CheckInterval, e.DialAddr, e.ClientCertID)
 }
 
 func (s *Store) DeleteEndpoint(ctx context.Context, id uuid.UUID) error {

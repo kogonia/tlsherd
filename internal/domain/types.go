@@ -207,13 +207,62 @@ type DomainServer struct {
 }
 
 type ServerEndpoint struct {
-	ID        uuid.UUID  `json:"id"`
-	ServerID  uuid.UUID  `json:"server_id"`
-	DomainID  *uuid.UUID `json:"domain_id"`
-	Host      string     `json:"host"`
-	Port      int        `json:"port"`
-	Enabled   bool       `json:"enabled"`
-	CreatedAt time.Time  `json:"created_at"`
+	ID            uuid.UUID  `json:"id"`
+	ServerID      uuid.UUID  `json:"server_id"`
+	DomainID      *uuid.UUID `json:"domain_id"`
+	Host          string     `json:"host"`
+	Port          int        `json:"port"`
+	Enabled       bool       `json:"enabled"`
+	CheckInterval string     `json:"check_interval,omitempty"`
+	DialAddr      string     `json:"dial_addr,omitempty"`
+	ClientCertID  *uuid.UUID `json:"client_cert_id,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+}
+
+// Managed certificate kinds.
+const (
+	ManagedKindCA            = "ca"
+	ManagedKindAllowedClient = "allowed_client"
+	ManagedKindMTLSClient    = "mtls_client"
+)
+
+// ManagedCertificate is inventory for CA / inbound client pins / our outbound mTLS client certs.
+type ManagedCertificate struct {
+	ID          uuid.UUID  `json:"id"`
+	Name        string     `json:"name"`
+	DisplayName string     `json:"display_name"`
+	Kind        string     `json:"kind"`
+	DomainID    *uuid.UUID `json:"domain_id,omitempty"`
+	Notes       string     `json:"notes"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+// ManagedCertificateVersion versions a managed certificate (mirrors DomainCertificate).
+type ManagedCertificateVersion struct {
+	ID              uuid.UUID  `json:"id"`
+	ManagedCertID   uuid.UUID  `json:"managed_cert_id"`
+	CertificateID   uuid.UUID  `json:"certificate_id"`
+	Version         int        `json:"version"`
+	IsCurrent       bool       `json:"is_current"`
+	ActivatedAt     time.Time  `json:"activated_at"`
+	DeactivatedAt   *time.Time `json:"deactivated_at,omitempty"`
+	ActivatedBy     *uuid.UUID `json:"activated_by,omitempty"`
+	Reason          string     `json:"reason"`
+}
+
+// ManagedCertServer assigns an mtls_client managed cert to a server for agent install.
+type ManagedCertServer struct {
+	ManagedCertID   uuid.UUID `json:"managed_cert_id"`
+	ServerID        uuid.UUID `json:"server_id"`
+	InstallMode     string    `json:"install_mode"`
+	CertPath        string    `json:"cert_path"`
+	KeyPath         string    `json:"key_path"`
+	ChainPath       string    `json:"chain_path"`
+	FullchainPath   string    `json:"fullchain_path"`
+	RestartOverride []byte    `json:"-"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 type MonitorResult struct {

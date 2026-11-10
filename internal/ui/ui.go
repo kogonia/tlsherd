@@ -77,10 +77,13 @@ var pages = []page{
 	{Path: "/servers", Name: "servers", Title: "Servers"},
 	{Path: "/servers/{id}", Name: "server", Title: "Server", HasID: true},
 	{Path: "/settings/agent-defaults", Name: "defaults", Title: "Agent defaults", AdminOnly: true},
+	{Path: "/settings/monitor", Name: "monitor-settings", Title: "Monitor settings", AdminOnly: true},
 	{Path: "/settings/notifications", Name: "notify-settings", Title: "Notifications", AdminOnly: true},
 	{Path: "/notification-accounts", Name: "notify-accounts", Title: "Notification accounts", AdminOnly: true},
 	{Path: "/notification-accounts/new", Name: "notify-account-new", Title: "New notification account", AdminOnly: true},
 	{Path: "/notification-accounts/{id}", Name: "notify-account", Title: "Notification account", AdminOnly: true, HasID: true},
+	{Path: "/managed-certificates", Name: "managed-certs", Title: "Managed certificates", AdminOnly: true},
+	{Path: "/managed-certificates/{id}", Name: "managed-cert", Title: "Managed certificate", AdminOnly: true, HasID: true},
 	{Path: "/events", Name: "events", Title: "Events"},
 	{Path: "/users", Name: "users", Title: "Users", AdminOnly: true},
 	{Path: "/monitor", Name: "monitor", Title: "Monitor"},
@@ -92,6 +95,8 @@ var navGroups = []navGroup{
 	{Label: "Fleet", Items: []navItem{
 		{Label: "Domains", Href: "/domains", Page: "domains", MatchPages: []string{"domains", "domain"}, Abbr: "Dom"},
 		{Label: "Servers", Href: "/servers", Page: "servers", MatchPages: []string{"servers", "server"}, Abbr: "Srv"},
+		{Label: "Managed certs", Href: "/managed-certificates", Page: "managed-certs",
+			MatchPages: []string{"managed-certs", "managed-cert"}, Abbr: "Mgt", AdminOnly: true},
 		{Label: "Enrollments", Href: "/enrollments", Page: "enrollments", Abbr: "Enr", AdminOnly: true},
 	}},
 	{Label: "Health", Items: []navItem{
@@ -104,6 +109,7 @@ var navGroups = []navGroup{
 	}},
 	{Label: "Settings", Items: []navItem{
 		{Label: "Agent defaults", Href: "/settings/agent-defaults", Page: "defaults", Abbr: "Def", AdminOnly: true},
+		{Label: "Monitor", Href: "/settings/monitor", Page: "monitor-settings", Abbr: "Mon", AdminOnly: true},
 		{Label: "Notifications", Href: "/settings/notifications", Page: "notify-settings", Abbr: "Ntf", AdminOnly: true},
 		{Label: "Notification accounts", Href: "/notification-accounts", Page: "notify-accounts",
 			MatchPages: []string{"notify-accounts", "notify-account", "notify-account-new"}, Abbr: "Acc", AdminOnly: true},
