@@ -26,11 +26,12 @@ func (h *Handler) listManagedCerts(w http.ResponseWriter, r *http.Request, u *do
 }
 
 type createManagedCertRequest struct {
-	Name        string      `json:"name"`
-	DisplayName string      `json:"display_name"`
-	Kind        string      `json:"kind"`
-	DomainIDs   []uuid.UUID `json:"domain_ids"`
-	Notes       string      `json:"notes"`
+	Name              string      `json:"name"`
+	DisplayName       string      `json:"display_name"`
+	Kind              string      `json:"kind"`
+	DomainIDs         []uuid.UUID `json:"domain_ids"`
+	Notes             string      `json:"notes"`
+	ConfirmCAMismatch bool        `json:"confirm_ca_mismatch"`
 }
 
 func (h *Handler) createManagedCert(w http.ResponseWriter, r *http.Request, u *domain.User) {
@@ -63,7 +64,8 @@ type patchManagedCertRequest struct {
 	DisplayName *string `json:"display_name"`
 	Notes       *string `json:"notes"`
 	// DomainIDs replaces the full link set when present (including []).
-	DomainIDs json.RawMessage `json:"domain_ids"`
+	DomainIDs         json.RawMessage `json:"domain_ids"`
+	ConfirmCAMismatch bool            `json:"confirm_ca_mismatch"`
 }
 
 func (h *Handler) updateManagedCert(w http.ResponseWriter, r *http.Request, u *domain.User) {
@@ -75,7 +77,9 @@ func (h *Handler) updateManagedCert(w http.ResponseWriter, r *http.Request, u *d
 	if !h.decodeJSON(w, r, &req, false) {
 		return
 	}
-	patch := service.ManagedCertPatch{DisplayName: req.DisplayName, Notes: req.Notes}
+	patch := service.ManagedCertPatch{
+		DisplayName: req.DisplayName, Notes: req.Notes, ConfirmCAMismatch: req.ConfirmCAMismatch,
+	}
 	if len(req.DomainIDs) > 0 {
 		if string(req.DomainIDs) == "null" {
 			empty := []uuid.UUID{}

@@ -74,7 +74,7 @@ host is gone. Rotate the certificates that host could read.
 | Domain without group | **Domains** (groups optional; assign later) |
 | Upload domain cert | Domain page; cert file may be leaf-only or fullchain |
 | CA / partner client pin / our mTLS client | **Managed certs** (kinds: `ca`, `allowed_client`, `mtls_client`) |
-| Link CA to domain(s) (leaf must match) | Managed cert → Linked domains (multi); upload confirms `ca_mismatch` |
+| Link CA to domain(s) (one CA per domain; leaf must match) | Managed cert → Linked domains; link/upload confirms `ca_mismatch` |
 | Deploy our mTLS client to hosts | Managed cert (`mtls_client`) → Servers assignment (same install/restart as domains) |
 | Probe partner host with client cert | **Monitor** → dial address + mTLS client cert; optional per-endpoint interval |
 | Global probe interval / timeout / expiring window | **Settings → Monitor** |

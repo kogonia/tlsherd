@@ -115,7 +115,7 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 			"not_before":          confirm.NotBefore,
 			"not_after":           confirm.NotAfter,
 			"current_certificate": confirm.CurrentCertificate,
-			"hint":                "repeat the upload with confirm_warnings=true (or per-issue flags) to install it anyway",
+			"hint":                "repeat with confirm_warnings=true / confirm_ca_mismatch=true (or per-issue flags) to proceed anyway",
 		}
 		if confirm.ManagedCertName != "" {
 			details["managed_cert"] = confirm.ManagedCertName

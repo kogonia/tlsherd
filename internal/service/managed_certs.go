@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -48,6 +49,9 @@ type ManagedCertInput struct {
 	Kind        string
 	DomainIDs   []uuid.UUID
 	Notes       string
+	// ConfirmCAMismatch accepts linking a CA to domains whose current leaf
+	// does not chain to this CA.
+	ConfirmCAMismatch bool
 }
 
 // ManagedCertPatch holds optional metadata changes. Name and Kind are immutable.
@@ -57,6 +61,9 @@ type ManagedCertPatch struct {
 	// DomainIDs, when non-nil, replaces the full set of linked domains
 	// (empty slice clears all links; administrators only).
 	DomainIDs *[]uuid.UUID
+	// ConfirmCAMismatch accepts CA↔domain links when the domain leaf does not
+	// chain to this CA (kind=ca only).
+	ConfirmCAMismatch bool
 }
 
 // ManagedCertListInput filters ListManagedCertificates.
@@ -206,6 +213,121 @@ func (s *Services) requireDomainIDsExistAndWritable(ctx context.Context, st stor
 	return nil
 }
 
+// validateCADomainLinks enforces one CA per domain and, when both sides have
+// material, that each domain leaf chains to this CA. Soft mismatches need
+// confirmCAMismatch; otherwise *CertConfirmationError is returned.
+func (s *Services) validateCADomainLinks(ctx context.Context, st store.Store, mc *domain.ManagedCertificate, domainIDs []uuid.UUID, confirmCAMismatch bool) error {
+	if mc.Kind != domain.ManagedKindCA || len(domainIDs) == 0 {
+		return nil
+	}
+	var caAnchors linkedCA
+	mv, err := st.GetCurrentManagedCertificateVersion(ctx, mc.ID)
+	switch {
+	case err == nil:
+		c, err := st.GetCertificate(ctx, mv.CertificateID)
+		if err != nil {
+			return err
+		}
+		p, err := s.loadStoredCert(c.FingerprintSHA256)
+		if err != nil {
+			return fmt.Errorf("load CA certificate: %w", err)
+		}
+		caAnchors = linkedCA{Name: mc.Name, Anchors: append([]*x509.Certificate{p.Leaf}, p.Chain...)}
+	case !errors.Is(err, domain.ErrNotFound):
+		return err
+	}
+
+	var problems []CertProblem
+	for _, did := range domainIDs {
+		others, err := st.ListManagedCertificates(ctx, store.ManagedCertFilter{Kind: domain.ManagedKindCA, DomainID: &did})
+		if err != nil {
+			return err
+		}
+		for _, other := range others {
+			if other.ID == mc.ID {
+				continue
+			}
+			d, _ := st.GetDomain(ctx, did)
+			fqdn := did.String()
+			if d != nil {
+				fqdn = d.FQDN
+			}
+			return conflictf("domain %s already has CA %q linked; unlink it first (one CA per domain)", fqdn, other.Name)
+		}
+		if len(caAnchors.Anchors) == 0 {
+			continue
+		}
+		dc, err := st.GetCurrentDomainCertificate(ctx, did)
+		if err != nil {
+			if errors.Is(err, domain.ErrNotFound) {
+				continue
+			}
+			return err
+		}
+		leafCert, err := st.GetCertificate(ctx, dc.CertificateID)
+		if err != nil {
+			return err
+		}
+		parsed, err := s.loadStoredCert(leafCert.FingerprintSHA256)
+		if err != nil {
+			s.log().Warn("cannot load domain certificate for CA link check", "component", "service",
+				"operation", "validate_ca_domain_links", "domain_id", did, "error", err)
+			continue
+		}
+		if caMatches([]linkedCA{caAnchors}, parsed.Leaf, parsed.Chain) {
+			continue
+		}
+		d, _ := st.GetDomain(ctx, did)
+		fqdn := did.String()
+		if d != nil {
+			fqdn = d.FQDN
+		}
+		problems = append(problems, CertProblem{
+			Code:    CertProblemCAMismatch,
+			Message: fmt.Sprintf("current certificate of %s is not signed by CA %q", fqdn, mc.Name),
+		})
+	}
+	if len(problems) == 0 || confirmCAMismatch {
+		return nil
+	}
+	return &CertConfirmationError{
+		Problems:        problems,
+		ManagedCertName: mc.Name,
+	}
+}
+
+// syncLinkedDomainCAEvents refreshes cert_ca_mismatch for every domain in ids
+// (and resolves it when the leaf matches or the domain has no leaf).
+func (s *Services) syncLinkedDomainCAEvents(ctx context.Context, st store.Store, domainIDs []uuid.UUID) error {
+	for _, did := range domainIDs {
+		d, err := st.GetDomain(ctx, did)
+		if err != nil {
+			if errors.Is(err, domain.ErrNotFound) {
+				continue
+			}
+			return err
+		}
+		dc, err := st.GetCurrentDomainCertificate(ctx, did)
+		if err != nil {
+			if errors.Is(err, domain.ErrNotFound) {
+				if err := s.resolve(ctx, st, DedupKey(EvCertCAMismatch, did.String()), "ca_unlinked"); err != nil {
+					return err
+				}
+				continue
+			}
+			return err
+		}
+		c, err := st.GetCertificate(ctx, dc.CertificateID)
+		if err != nil {
+			return err
+		}
+		if err := s.scanDomainCAStore(ctx, st, d, c); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // CRUD
 
@@ -247,7 +369,15 @@ func (s *Services) CreateManagedCertificate(ctx context.Context, actor *domain.U
 			}
 			return err
 		}
+		// CA exclusivity / leaf match: validate after create so mc.ID is set;
+		// roll back the whole tx on failure.
+		if err := s.validateCADomainLinks(ctx, tx, mc, domainIDs, in.ConfirmCAMismatch); err != nil {
+			return err
+		}
 		if err := tx.SetManagedCertDomains(ctx, mc.ID, domainIDs); err != nil {
+			return err
+		}
+		if err := s.syncLinkedDomainCAEvents(ctx, tx, domainIDs); err != nil {
 			return err
 		}
 		return s.audit(ctx, tx, actor, "managed_certificate.create", "managed_certificate", mc.ID.String(),
@@ -345,12 +475,26 @@ func (s *Services) UpdateManagedCertificate(ctx context.Context, actor *domain.U
 			mc.Notes = v
 			changes["notes"] = v
 		}
+		var prevDomainIDs []uuid.UUID
 		if p.DomainIDs != nil {
 			domainIDs := uniqueUUIDs(*p.DomainIDs)
 			if err := s.requireDomainIDsExistAndWritable(ctx, tx, actor, domainIDs); err != nil {
 				return err
 			}
+			var err error
+			prevDomainIDs, err = tx.ListManagedCertDomainIDs(ctx, mc.ID)
+			if err != nil {
+				return err
+			}
+			if err := s.validateCADomainLinks(ctx, tx, mc, domainIDs, p.ConfirmCAMismatch); err != nil {
+				return err
+			}
 			if err := tx.SetManagedCertDomains(ctx, mc.ID, domainIDs); err != nil {
+				return err
+			}
+			// Refresh CA match events for domains that were added or removed.
+			touched := uniqueUUIDs(append(append([]uuid.UUID{}, prevDomainIDs...), domainIDs...))
+			if err := s.syncLinkedDomainCAEvents(ctx, tx, touched); err != nil {
 				return err
 			}
 			changes["domain_ids"] = domainIDs

@@ -1353,7 +1353,7 @@
       });
       return section('Related managed certificates',
         h('p', {class: 'help'},
-          'Linked CAs are used to verify this domain’s server certificate. Allowed clients document inbound mTLS identities. Our mTLS clients are outbound credentials.'),
+          'At most one CA may be linked (leaf must chain to it). Allowed clients document inbound mTLS identities. Our mTLS clients are outbound credentials.'),
         table(['Certificate', 'Kind', 'Expires', 'Key'], rows, 'No managed certificates linked to this domain.'),
         h('p', null, link('/managed-certificates', 'Manage certificates →')));
     }
@@ -2044,16 +2044,32 @@
           notes: notes.value,
           domain_ids: picker.values(),
         };
-        if (await act(b, () => api('PATCH', base, body), 'Saved')) reload();
+        const send = (extra) => api('PATCH', base, Object.assign({}, body, extra || {}));
+        if (await act(b, async () => {
+          try {
+            await send();
+          } catch (e) {
+            if (!(e instanceof ApiError) || e.code !== 'confirmation_required') throw e;
+            const problems = (e.details && e.details.problems) || [];
+            const msg = 'CA does not match the domain certificate:\n\n' +
+              problems.map((p) => '• ' + (p.message || p.code)).join('\n') +
+              '\n\nLink anyway?';
+            if (!confirm(msg)) throw e;
+            await send({confirm_ca_mismatch: true});
+          }
+        }, 'Saved')) reload();
       }, 'primary');
       const del = button('Delete', async (b) => {
         if (!confirm('Delete managed certificate ' + m.name + '?')) return;
         if (await act(b, () => api('DELETE', base), 'Deleted')) location.href = '/managed-certificates';
       }, 'danger');
+      const domainHelp = m.kind === 'ca'
+        ? 'One CA per domain. A CA may cover many FQDNs. Linking checks that each domain’s current leaf is signed by this CA.'
+        : 'Optional organizational link to one or more domains.';
       return section(m.display_name || m.name, info,
         field('Display name', display),
         h('h3', null, 'Linked domains'),
-        h('p', {class: 'help'}, 'A CA may cover many FQDNs (e.g. a.domain.com and b.domain.com). Leaf uploads are checked against linked CAs.'),
+        h('p', {class: 'help'}, domainHelp),
         picker.node,
         field('Notes', notes),
         h('p', null, btns(save, del)));

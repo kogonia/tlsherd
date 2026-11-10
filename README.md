@@ -66,9 +66,9 @@ Layers (`handler → service → store`, no reverse dependencies):
   versions + rollback. Files under `<data_dir>/certs/<sha256>/` and
   `<data_dir>/domains/<fqdn>/current`.
 - **Managed certificates.** Inventory outside domain deploy: `ca` / `allowed_client`
-  (cert-only) and `mtls_client` (cert+key, agent-deployable). Link one CA to many domains;
-  linked CAs are checked against each domain leaf. Expiry scanning and
-  confirm-on-identity-change apply. See [Operations](docs/operations.md).
+  (cert-only) and `mtls_client` (cert+key, agent-deployable). Link one CA to many
+  domains (one CA per domain); linking and leaf upload verify the chain. Expiry
+  scanning and confirm-on-identity-change apply. See [Operations](docs/operations.md).
 - **Monitor.** Probes endpoints (agent last IP or custom dial address; optional mTLS client
   cert); global settings + per-endpoint interval; events for down / expiry / mismatch.
 - **Events.** Open alarms close on success or **Dismiss**. Instant types are stored resolved.

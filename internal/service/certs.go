@@ -39,7 +39,7 @@ type UploadInput struct {
 	ConfirmDomainMismatch bool
 	ConfirmExpired        bool
 	ConfirmNotYetValid    bool
-	// ConfirmCAMismatch accepts a leaf that does not chain to any linked CA managed certificate.
+	// ConfirmCAMismatch accepts a leaf that does not chain to the linked CA.
 	ConfirmCAMismatch bool
 	// ConfirmWarnings acknowledges every soft problem in one shot (UI confirm modal).
 	ConfirmWarnings bool
@@ -177,10 +177,10 @@ func (s *Services) UploadCertificate(ctx context.Context, actor *domain.User, do
 		})
 	}
 	if caMismatch && !confirmCA {
+		caName := strings.Join(linkedCANames(linkedCAs), ", ")
 		problems = append(problems, CertProblem{
-			Code: CertProblemCAMismatch,
-			Message: fmt.Sprintf("certificate is not signed by any linked CA (%s)",
-				strings.Join(linkedCANames(linkedCAs), ", ")),
+			Code:    CertProblemCAMismatch,
+			Message: fmt.Sprintf("certificate is not signed by linked CA %s", caName),
 		})
 	}
 	if len(problems) > 0 {

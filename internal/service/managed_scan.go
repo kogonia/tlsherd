@@ -82,9 +82,9 @@ func linkedCANames(cas []linkedCA) []string {
 	return out
 }
 
-// caMatches reports whether leaf chains to at least one linked CA. Only
-// signatures are checked (not validity periods), following leaf -> chain
-// certificates -> anchor.
+// caMatches reports whether leaf chains to the linked CA (domains have at most
+// one). Only signatures are checked (not validity periods), following
+// leaf -> chain certificates -> anchor.
 func caMatches(cas []linkedCA, leaf *x509.Certificate, chain []*x509.Certificate) bool {
 	for _, ca := range cas {
 		if certChainsTo(leaf, chain, ca.Anchors) {
@@ -132,14 +132,18 @@ func (s *Services) syncCAMismatchEvent(ctx context.Context, st store.Store, d *d
 	names := linkedCANames(cas)
 	return s.emit(ctx, st, &domain.Event{
 		Type: EvCertCAMismatch, Severity: SeverityWarning, DomainID: &d.ID, CertificateID: &cert.ID, DedupKey: &key,
-		Message: fmt.Sprintf("certificate of %s is not signed by any linked CA (%v)", d.FQDN, names),
-		Details: jsonDetails(map[string]any{"fingerprint": cert.FingerprintSHA256, "linked_cas": names}),
+		Message: fmt.Sprintf("certificate of %s is not signed by linked CA %s", d.FQDN, names[0]),
+		Details: jsonDetails(map[string]any{"fingerprint": cert.FingerprintSHA256, "linked_ca": names[0]}),
 	})
 }
 
 // scanDomainCA re-checks the current leaf of a domain against its linked CAs.
 func (s *Services) scanDomainCA(ctx context.Context, d *domain.Domain, cert *domain.Certificate) error {
-	cas, err := s.linkedCAs(ctx, s.Store, d.ID)
+	return s.scanDomainCAStore(ctx, s.Store, d, cert)
+}
+
+func (s *Services) scanDomainCAStore(ctx context.Context, st store.Store, d *domain.Domain, cert *domain.Certificate) error {
+	cas, err := s.linkedCAs(ctx, st, d.ID)
 	if err != nil {
 		return err
 	}
@@ -153,7 +157,7 @@ func (s *Services) scanDomainCA(ctx context.Context, d *domain.Domain, cert *dom
 		}
 		mismatch = !caMatches(cas, p.Leaf, p.Chain)
 	}
-	return s.syncCAMismatchEvent(ctx, s.Store, d, cert, cas, mismatch)
+	return s.syncCAMismatchEvent(ctx, st, d, cert, cas, mismatch)
 }
 
 // ---------------------------------------------------------------------------

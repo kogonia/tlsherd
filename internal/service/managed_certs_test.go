@@ -74,8 +74,11 @@ func TestCertChainsTo(t *testing.T) {
 	if !certChainsTo(root, nil, []*x509.Certificate{root}) {
 		t.Fatal("a certificate equal to the anchor must match")
 	}
-	if !caMatches([]linkedCA{{Name: "o", Anchors: []*x509.Certificate{other}}, {Name: "r", Anchors: []*x509.Certificate{root}}}, leaf, nil) {
-		t.Fatal("any linked CA may match")
+	if caMatches([]linkedCA{{Name: "o", Anchors: []*x509.Certificate{other}}}, leaf, nil) {
+		t.Fatal("unrelated CA must not match")
+	}
+	if !caMatches([]linkedCA{{Name: "r", Anchors: []*x509.Certificate{root}}}, leaf, nil) {
+		t.Fatal("linked CA must match")
 	}
 	// leaf <- inter, inter <- root: the chain bridges to the anchor.
 	inter, interKey := newTestCA(t, "inter")
