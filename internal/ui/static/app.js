@@ -1946,7 +1946,7 @@
     const kind = select('kind', MANAGED_KINDS, 'ca');
     const notes = h('textarea', {name: 'notes', rows: 2}, '');
     const createForm = h('form', null,
-      h('div', {class: 'row'},
+      h('div', {class: 'row row-top'},
         field('Name (slug)', name, 'Path-safe slug; used as agent install dir for mtls_client.'),
         field('Display name', display),
         field('Kind', kind)),
