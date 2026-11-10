@@ -376,6 +376,57 @@
 
   function json(v) { return JSON.stringify(v, null, 2); }
 
+  // certDownloadParts renders cert/chain/key download controls. Missing parts
+  // are muted; available parts fetch via XHR so errors toast instead of a JSON page.
+  function certDownloadParts(fp, cert) {
+    if (!fp) return muted('—');
+    const available = {
+      cert: true,
+      chain: !!(cert && cert.has_chain),
+      key: !!(cert && cert.has_key),
+    };
+    function partLink(part) {
+      if (!available[part]) {
+        return h('span', {class: 'muted', title: 'No ' + part + ' file stored'}, part);
+      }
+      return h('a', {
+        href: API + '/certificates/' + fp + '/' + part,
+        download: fp.slice(0, 12) + '-' + part + '.pem',
+        async onclick(ev) {
+          ev.preventDefault();
+          try {
+            const res = await fetch(API + '/certificates/' + fp + '/' + part, {
+              credentials: 'same-origin',
+              headers: {Accept: 'application/octet-stream'},
+            });
+            if (!res.ok) {
+              let data = null;
+              const text = await res.text();
+              try { data = JSON.parse(text); } catch (e) { /* pem/plain */ }
+              throw new ApiError(res.status, data || {error: {message: text || ('HTTP ' + res.status)}});
+            }
+            const blob = await res.blob();
+            if (!blob.size) {
+              toast('No ' + part + ' file on server', 'error');
+              return;
+            }
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fp.slice(0, 12) + '-' + part + '.pem';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+          } catch (e) {
+            toast(errMsg(e), 'error');
+          }
+        },
+      }, part);
+    }
+    return h('div', {class: 'small'}, partLink('cert'), ' · ', partLink('chain'), ' · ', partLink('key'));
+  }
+
   // loadInto renders an async section; failures show inline instead of breaking the page.
   async function loadInto(container, fn) {
     try {
@@ -1189,7 +1240,6 @@
       const rows = vs.map((v) => {
         const c = v.certificate || {};
         const fp = c.fingerprint_sha256 || '';
-        const dl = (part) => h('a', {href: API + '/certificates/' + fp + '/' + part}, part);
         return [
           'v' + v.version,
           v.is_current ? badge('current', 'ok') : '',
@@ -1197,7 +1247,7 @@
           c.subject_cn || '',
           expiryBadge(c.not_after),
           h('div', {class: 'small'}, fmt(v.activated_at), v.reason ? h('div', {class: 'muted'}, v.reason) : null),
-          h('div', {class: 'small'}, dl('cert'), ' · ', dl('chain'), ' · ', dl('key')),
+          certDownloadParts(fp, c),
           v.is_current ? muted('current') : btns(
             button('Roll back', async (b) => {
               const reason = prompt('Reason for rolling back to v' + v.version + ' (optional):', '');
@@ -1211,7 +1261,7 @@
         ];
       });
       return section('Versions', table(['Version', '', 'Fingerprint', 'Subject CN', 'Expires', 'Activated', 'Download', ''], rows, 'No certificate uploaded yet.'),
-        h('p', {class: 'help'}, 'Rollback re-activates an older version. Delete removes a non-current version from history (and unused certificate files).'));
+        h('p', {class: 'help'}, 'Rollback re-activates an older version. Delete removes a non-current version from history (and unused certificate files). Missing chain/key stay inactive.'));
     }
 
     // domainServerEditor: Add/Edit panel for one domain↔server assignment.
@@ -2120,7 +2170,6 @@
       const rows = vs.map((v) => {
         const c = v.certificate || {};
         const fp = c.fingerprint_sha256 || '';
-        const dl = (part) => h('a', {href: API + '/certificates/' + fp + '/' + part}, part);
         return [
           'v' + v.version,
           v.is_current ? badge('current', 'ok') : '',
@@ -2128,12 +2177,12 @@
           c.subject_cn || '',
           expiryBadge(c.not_after),
           h('div', {class: 'small'}, fmt(v.activated_at), v.reason ? h('div', {class: 'muted'}, v.reason) : null),
-          h('div', {class: 'small'}, dl('cert'), ' · ', dl('chain'), ' · ', dl('key')),
+          certDownloadParts(fp, c),
         ];
       });
       return section('Versions',
         table(['Version', '', 'Fingerprint', 'Subject', 'Expires', 'Activated', 'Download'], rows, 'No certificate uploaded yet.'),
-        h('p', {class: 'help'}, 'Key download is administrators only. CA / allowed client entries may have no key file.'));
+        h('p', {class: 'help'}, 'Missing chain/key stay inactive. Key download is administrators only.'));
     }
 
     async function assignSection() {

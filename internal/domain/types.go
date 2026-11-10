@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"net/netip"
 	"time"
 
@@ -109,6 +110,20 @@ type Certificate struct {
 	ChainPath         string     `json:"-"`
 	UploadedAt        time.Time  `json:"uploaded_at"`
 	UploadedBy        *uuid.UUID `json:"uploaded_by"`
+}
+
+// MarshalJSON exposes has_key / has_chain without leaking filesystem paths.
+func (c Certificate) MarshalJSON() ([]byte, error) {
+	type certOut Certificate
+	return json.Marshal(struct {
+		certOut
+		HasKey   bool `json:"has_key"`
+		HasChain bool `json:"has_chain"`
+	}{
+		certOut:  certOut(c),
+		HasKey:   c.KeyPath != "",
+		HasChain: c.ChainPath != "",
+	})
 }
 
 type DomainCertificate struct {

@@ -89,22 +89,35 @@ func (s *Services) writeCertFiles(p *certutil.Parsed) (storedCertPaths, error) {
 		Chain: filepath.Join(dir, chainFileName),
 	}
 	hasKey := len(p.KeyPEM) > 0
+	hasChain := len(p.ChainPEM) > 0
 	if fileExists(paths.Cert) {
 		switch {
 		case fileExists(paths.Key):
+			if !hasChain {
+				paths.Chain = ""
+			}
 			return paths, nil
 		case !hasKey:
 			paths.Key = ""
+			if !hasChain {
+				paths.Chain = ""
+			}
 			return paths, nil
 		default:
 			if err := writeFileSync(paths.Key, p.KeyPEM, keyMode); err != nil {
 				return storedCertPaths{}, err
+			}
+			if !hasChain {
+				paths.Chain = ""
 			}
 			return paths, nil
 		}
 	}
 	if !hasKey {
 		paths.Key = ""
+	}
+	if !hasChain {
+		paths.Chain = ""
 	}
 	root := s.certsRoot()
 	if err := os.MkdirAll(root, dirMode); err != nil {
@@ -134,8 +147,14 @@ func (s *Services) writeCertFiles(p *certutil.Parsed) (storedCertPaths, error) {
 		mode fs.FileMode
 	}{
 		{certFileName, p.CertPEM, certMode},
-		{chainFileName, p.ChainPEM, certMode},
 		{metaFileName, meta, certMode},
+	}
+	if hasChain {
+		files = append(files, struct {
+			name string
+			data []byte
+			mode fs.FileMode
+		}{chainFileName, p.ChainPEM, certMode})
 	}
 	if hasKey {
 		files = append(files, struct {

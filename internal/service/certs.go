@@ -562,6 +562,9 @@ func (s *Services) DownloadCertificate(ctx context.Context, actor *domain.User, 
 	if err != nil {
 		return nil, err
 	}
+	if len(b) == 0 {
+		return nil, notFoundf("certificate file is missing on the server")
+	}
 	if part == PartKey {
 		if err := s.audit(ctx, s.Store, actor, "certificate.key_download", "certificate", c.ID.String(),
 			map[string]any{"fingerprint": c.FingerprintSHA256}); err != nil {
