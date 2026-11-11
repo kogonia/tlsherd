@@ -217,8 +217,13 @@
     return badge(s, {critical: 'bad', error: 'bad', warning: 'warn', warn: 'warn', info: 'info'}[s]);
   }
 
-  function stat(n, l, kind, href) {
-    const box = h('div', {class: 'stat' + (kind ? ' ' + kind : '')}, h('div', {class: 'n'}, n), h('div', {class: 'l'}, l));
+  // stat renders a dashboard tile. n may be a number or preformatted string;
+  // sub is an optional secondary line (e.g. "10 online · 2 offline").
+  function stat(n, l, kind, href, sub) {
+    const box = h('div', {class: 'stat' + (kind ? ' ' + kind : '')},
+      h('div', {class: 'n'}, n),
+      h('div', {class: 'l'}, l),
+      sub ? h('div', {class: 's'}, sub) : null);
     return href ? h('a', {href}, box) : box;
   }
 
@@ -771,16 +776,30 @@
     const d = await api('GET', '/dashboard');
     const servers = d.servers || {};
     const open = d.open_events || {};
-    const grid = h('div', {class: 'grid'},
+    const online = servers.active || 0;
+    const offline = (servers.offline || 0) + (servers.blocked_identity || 0);
+    const critical = (open.critical || 0) + (open.error || 0);
+    const warning = open.warning || open.warn || 0;
+    // 4×2 inventory / health layout. Identity alerts fold into enrollments
+    // (same destination) so the grid stays even.
+    const grid = h('div', {class: 'grid dashboard-grid'},
+      // row 1
       stat(d.domains, 'Domains', '', '/domains'),
+      IS_ADMIN ? stat(d.managed_certificates || 0, 'Managed certs', '', '/managed-certificates') : null,
+      stat(online + ' · ' + offline, 'Servers', offline ? 'bad' : '', '/servers', 'online · offline'),
+      IS_ADMIN ? stat(
+        (d.pending_enrollments || 0) + ' · ' + (d.identity_alerts || 0),
+        'Enrollments',
+        d.identity_alerts ? 'bad' : (d.pending_enrollments ? 'warn' : ''),
+        '/enrollments',
+        'pending · identity') : null,
+      // row 2
       stat(d.domains_expired, 'Expired', d.domains_expired ? 'bad' : '', '/domains'),
       stat(d.domains_expiring_soon, 'Expiring soon', d.domains_expiring_soon ? 'warn' : '', '/domains'),
-      IS_ADMIN ? stat(d.managed_certificates, 'Managed certs', '', '/managed-certificates') : null,
-      Object.keys(servers).sort().map((k) => stat(servers[k], 'Servers: ' + k, k === 'blocked_identity' ? 'bad' : '', '/servers')),
-      stat(d.pending_enrollments, 'Pending enrollments', d.pending_enrollments ? 'warn' : '', IS_ADMIN ? '/enrollments' : null),
-      stat(d.identity_alerts, 'Identity alerts', d.identity_alerts ? 'bad' : '', IS_ADMIN ? '/enrollments' : null),
-      stat(d.endpoints_down, 'Endpoints down', d.endpoints_down ? 'bad' : '', '/monitor'),
-      Object.keys(open).sort().map((k) => stat(open[k], 'Open events: ' + k, k === 'critical' || k === 'error' ? 'bad' : '', '/events')));
+      stat((d.endpoints_total || 0) + ' · ' + (d.endpoints_down || 0), 'Endpoints',
+        d.endpoints_down ? 'bad' : '', '/monitor', 'total · down'),
+      stat(critical + ' · ' + warning, 'Open events',
+        critical ? 'bad' : (warning ? 'warn' : ''), '/events', 'critical · warning'));
     root.replaceChildren(grid);
 
     const expiring = d.expiring || [];

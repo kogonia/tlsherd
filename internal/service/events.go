@@ -49,6 +49,7 @@ type Dashboard struct {
 	PendingEnrollments  int              `json:"pending_enrollments"`
 	IdentityAlerts      int              `json:"identity_alerts"`
 	OpenEvents          map[string]int   `json:"open_events"` // by severity
+	EndpointsTotal      int              `json:"endpoints_total"`
 	EndpointsDown       int              `json:"endpoints_down"`
 	Expiring            []ExpiringDomain `json:"expiring"`
 }
@@ -358,6 +359,7 @@ func (s *Services) Dashboard(ctx context.Context, actor *domain.User) (*Dashboar
 	if err != nil {
 		return nil, err
 	}
+	out.EndpointsTotal = len(eps)
 	for _, ep := range eps {
 		if ep.Enabled && ep.Latest != nil && (!ep.Latest.Reachable || !ep.Latest.TLSOK) {
 			out.EndpointsDown++
