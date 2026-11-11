@@ -2610,9 +2610,9 @@
       const addBtn = h('button', {type: 'button', class: 'primary'}, 'Add endpoint');
       const dnsBtn = h('button', {type: 'button'}, 'DNS check');
       const row = h('div', {class: 'endpoint-add-row'},
-        h('div', {class: 'row'},
+        h('div', {class: 'row row-top'},
           field('Server', sSel), field('Host', host), field('Domain', dSel), field('Port', port)),
-        h('div', {class: 'row'},
+        h('div', {class: 'row row-top'},
           field('Check interval', interval, 'Optional Go duration override, e.g. 1m.'),
           field('Dial address', dial, 'Optional host/IP instead of agent last IP (partner targets).'),
           field('mTLS client cert', clientSel, 'Our outbound client cert to present.')),
