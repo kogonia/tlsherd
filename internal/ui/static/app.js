@@ -217,13 +217,11 @@
     return badge(s, {critical: 'bad', error: 'bad', warning: 'warn', warn: 'warn', info: 'info'}[s]);
   }
 
-  // stat renders a dashboard tile. n may be a number or preformatted string;
-  // sub is an optional secondary line (e.g. "10 online · 2 offline").
-  function stat(n, l, kind, href, sub) {
+  // stat renders a dashboard tile. n may be a number or preformatted string.
+  function stat(n, l, kind, href) {
     const box = h('div', {class: 'stat' + (kind ? ' ' + kind : '')},
       h('div', {class: 'n'}, n),
-      h('div', {class: 'l'}, l),
-      sub ? h('div', {class: 's'}, sub) : null);
+      h('div', {class: 'l'}, l));
     return href ? h('a', {href}, box) : box;
   }
 
@@ -786,20 +784,20 @@
       // row 1
       stat(d.domains, 'Domains', '', '/domains'),
       IS_ADMIN ? stat(d.managed_certificates || 0, 'Managed certs', '', '/managed-certificates') : null,
-      stat(online + ' · ' + offline, 'Servers', offline ? 'bad' : '', '/servers', 'online · offline'),
+      stat(online + ' · ' + offline, 'Servers (online · offline)', offline ? 'bad' : '', '/servers'),
       IS_ADMIN ? stat(
         (d.pending_enrollments || 0) + ' · ' + (d.identity_alerts || 0),
-        'Enrollments',
+        'Enrollments (pending · identity)',
         d.identity_alerts ? 'bad' : (d.pending_enrollments ? 'warn' : ''),
-        '/enrollments',
-        'pending · identity') : null,
+        '/enrollments') : null,
       // row 2
       stat(d.domains_expired, 'Expired', d.domains_expired ? 'bad' : '', '/domains'),
       stat(d.domains_expiring_soon, 'Expiring soon', d.domains_expiring_soon ? 'warn' : '', '/domains'),
-      stat((d.endpoints_total || 0) + ' · ' + (d.endpoints_down || 0), 'Endpoints',
-        d.endpoints_down ? 'bad' : '', '/monitor', 'total · down'),
-      stat(critical + ' · ' + warning, 'Open events',
-        critical ? 'bad' : (warning ? 'warn' : ''), '/events', 'critical · warning'));
+      stat((d.endpoints_total || 0) + ' · ' + (d.endpoints_down || 0),
+        'Endpoints (total · down)', d.endpoints_down ? 'bad' : '', '/monitor'),
+      stat(critical + ' · ' + warning,
+        'Open events (critical · warning)',
+        critical ? 'bad' : (warning ? 'warn' : ''), '/events'));
     root.replaceChildren(grid);
 
     const expiring = d.expiring || [];

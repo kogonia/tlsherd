@@ -175,7 +175,6 @@ body.nav-collapsed #nav-collapse { transform: scaleX(-1); }
 .stat { background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
 .stat .n { font-size: 24px; font-weight: 600; }
 .stat .l { color: var(--muted); font-size: 12px; }
-.stat .s { color: var(--muted); font-size: 11px; margin-top: 2px; }
 .stat.warn { border-color: #e6c35c; background: var(--warn-bg); }
 .stat.bad { border-color: #e69a94; background: var(--bad-bg); }
 
