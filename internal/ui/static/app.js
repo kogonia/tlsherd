@@ -775,7 +775,7 @@
       stat(d.domains, 'Domains', '', '/domains'),
       stat(d.domains_expired, 'Expired', d.domains_expired ? 'bad' : '', '/domains'),
       stat(d.domains_expiring_soon, 'Expiring soon', d.domains_expiring_soon ? 'warn' : '', '/domains'),
-      IS_ADMIN ? stat(d.domains_ungrouped, 'Domains without group', d.domains_ungrouped ? 'warn' : '', '/domains') : null,
+      IS_ADMIN ? stat(d.managed_certificates, 'Managed certs', '', '/managed-certificates') : null,
       Object.keys(servers).sort().map((k) => stat(servers[k], 'Servers: ' + k, k === 'blocked_identity' ? 'bad' : '', '/servers')),
       stat(d.pending_enrollments, 'Pending enrollments', d.pending_enrollments ? 'warn' : '', IS_ADMIN ? '/enrollments' : null),
       stat(d.identity_alerts, 'Identity alerts', d.identity_alerts ? 'bad' : '', IS_ADMIN ? '/enrollments' : null),

@@ -44,8 +44,8 @@ type Dashboard struct {
 	Domains             int              `json:"domains"`
 	DomainsExpired      int              `json:"domains_expired"`
 	DomainsExpiringSoon int              `json:"domains_expiring_soon"`
-	DomainsUngrouped    int              `json:"domains_ungrouped"` // admin only
-	Servers             map[string]int   `json:"servers"`           // by agent_status
+	ManagedCertificates int              `json:"managed_certificates"` // admin only
+	Servers             map[string]int   `json:"servers"`             // by agent_status
 	PendingEnrollments  int              `json:"pending_enrollments"`
 	IdentityAlerts      int              `json:"identity_alerts"`
 	OpenEvents          map[string]int   `json:"open_events"` // by severity
@@ -299,9 +299,6 @@ func (s *Services) Dashboard(ctx context.Context, actor *domain.User) (*Dashboar
 	now := s.now()
 	out.Domains = len(domains)
 	for _, d := range domains {
-		if len(d.GroupIDs) == 0 {
-			out.DomainsUngrouped++
-		}
 		if d.CurrentCertificate == nil {
 			continue
 		}
@@ -342,6 +339,11 @@ func (s *Services) Dashboard(ctx context.Context, actor *domain.User) (*Dashboar
 				out.IdentityAlerts++
 			}
 		}
+		mcs, err := s.Store.ListManagedCertificates(ctx, store.ManagedCertFilter{})
+		if err != nil {
+			return nil, fmt.Errorf("dashboard: %w", err)
+		}
+		out.ManagedCertificates = len(mcs)
 	}
 
 	evs, err := s.ListEvents(ctx, actor, ListEventsInput{UnresolvedOnly: true, Limit: 1000})

@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"encoding/json"
 	"net/netip"
 	"time"
 
@@ -108,22 +107,19 @@ type Certificate struct {
 	CertPath          string     `json:"-"`
 	KeyPath           string     `json:"-"`
 	ChainPath         string     `json:"-"`
+	HasKey            bool       `json:"has_key"`
+	HasChain          bool       `json:"has_chain"`
 	UploadedAt        time.Time  `json:"uploaded_at"`
 	UploadedBy        *uuid.UUID `json:"uploaded_by"`
 }
 
-// MarshalJSON exposes has_key / has_chain without leaking filesystem paths.
-func (c Certificate) MarshalJSON() ([]byte, error) {
-	type certOut Certificate
-	return json.Marshal(struct {
-		certOut
-		HasKey   bool `json:"has_key"`
-		HasChain bool `json:"has_chain"`
-	}{
-		certOut:  certOut(c),
-		HasKey:   c.KeyPath != "",
-		HasChain: c.ChainPath != "",
-	})
+// SetPresenceFlags fills HasKey / HasChain from stored paths (no path leak in JSON).
+func (c *Certificate) SetPresenceFlags() {
+	if c == nil {
+		return
+	}
+	c.HasKey = c.KeyPath != ""
+	c.HasChain = c.ChainPath != ""
 }
 
 type DomainCertificate struct {

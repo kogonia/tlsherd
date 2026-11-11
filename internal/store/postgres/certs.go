@@ -29,6 +29,7 @@ func scanCertificate(r rowScanner) (domain.Certificate, error) {
 			return c, fmt.Errorf("decode sans: %w", err)
 		}
 	}
+	c.SetPresenceFlags()
 	return c, nil
 }
 
@@ -68,7 +69,11 @@ func (s *Store) UpsertCertificate(ctx context.Context, c *domain.Certificate) er
 		c.NotBefore, c.NotAfter, c.KeyAlgo, c.KeyBits, c.CertPath, c.KeyPath, c.ChainPath,
 		timeOrNil(c.UploadedAt), c.UploadedBy,
 	).Scan(&c.ID, &c.UploadedAt, &c.UploadedBy)
-	return mapErr("upsert certificate", err)
+	if err != nil {
+		return mapErr("upsert certificate", err)
+	}
+	c.SetPresenceFlags()
+	return nil
 }
 
 func (s *Store) GetCertificateByFingerprint(ctx context.Context, fp string) (*domain.Certificate, error) {
