@@ -89,15 +89,16 @@ func (s *Services) PutNotificationSettings(ctx context.Context, actor *domain.Us
 
 // CreateNotificationAccountInput creates a notification account.
 type CreateNotificationAccountInput struct {
-	Name       string               `json:"name"`
-	Enabled    *bool                `json:"enabled"`
-	AllowAll   bool                 `json:"allow_all"`
-	EventTypes []string             `json:"event_types"`
-	Timezone   string               `json:"timezone"`
-	WindowDays []int                `json:"window_days"`
-	WindowFrom string               `json:"window_from"`
-	WindowTo   string               `json:"window_to"`
-	Scopes     []domain.NotifyScope `json:"scopes"`
+	Name           string               `json:"name"`
+	Enabled        *bool                `json:"enabled"`
+	AllowAll       bool                 `json:"allow_all"`
+	IncludeManaged bool                 `json:"include_managed"`
+	EventTypes     []string             `json:"event_types"`
+	Timezone       string               `json:"timezone"`
+	WindowDays     []int                `json:"window_days"`
+	WindowFrom     string               `json:"window_from"`
+	WindowTo       string               `json:"window_to"`
+	Scopes         []domain.NotifyScope `json:"scopes"`
 }
 
 // CreateNotificationAccount creates an account. Admin only.
@@ -142,8 +143,8 @@ func (s *Services) CreateNotificationAccount(ctx context.Context, actor *domain.
 		return nil, err
 	}
 	a := &domain.NotificationAccount{
-		Name: name, Enabled: enabled, AllowAll: in.AllowAll, EventTypes: types,
-		Timezone: tz, WindowDays: days, WindowFrom: from, WindowTo: to,
+		Name: name, Enabled: enabled, AllowAll: in.AllowAll, IncludeManaged: in.IncludeManaged,
+		EventTypes: types, Timezone: tz, WindowDays: days, WindowFrom: from, WindowTo: to,
 	}
 	if err := s.Store.CreateNotificationAccount(ctx, a); err != nil {
 		return nil, fmt.Errorf("create notification account: %w", err)
@@ -159,15 +160,16 @@ func (s *Services) CreateNotificationAccount(ctx context.Context, actor *domain.
 
 // UpdateNotificationAccountInput updates an account.
 type UpdateNotificationAccountInput struct {
-	Name       string               `json:"name"`
-	Enabled    *bool                `json:"enabled"`
-	AllowAll   *bool                `json:"allow_all"`
-	EventTypes []string             `json:"event_types"`
-	Timezone   string               `json:"timezone"`
-	WindowDays []int                `json:"window_days"`
-	WindowFrom string               `json:"window_from"`
-	WindowTo   string               `json:"window_to"`
-	Scopes     []domain.NotifyScope `json:"scopes"`
+	Name           string               `json:"name"`
+	Enabled        *bool                `json:"enabled"`
+	AllowAll       *bool                `json:"allow_all"`
+	IncludeManaged *bool                `json:"include_managed"`
+	EventTypes     []string             `json:"event_types"`
+	Timezone       string               `json:"timezone"`
+	WindowDays     []int                `json:"window_days"`
+	WindowFrom     string               `json:"window_from"`
+	WindowTo       string               `json:"window_to"`
+	Scopes         []domain.NotifyScope `json:"scopes"`
 }
 
 // UpdateNotificationAccount updates an account. Admin only.
@@ -190,6 +192,9 @@ func (s *Services) UpdateNotificationAccount(ctx context.Context, actor *domain.
 	}
 	if in.AllowAll != nil {
 		a.AllowAll = *in.AllowAll
+	}
+	if in.IncludeManaged != nil {
+		a.IncludeManaged = *in.IncludeManaged
 	}
 	if in.EventTypes != nil {
 		types, err := validateEventTypes(in.EventTypes, false)
@@ -443,6 +448,10 @@ func (s *Services) validateScopes(ctx context.Context, scopes []domain.NotifySco
 		case domain.NotifyScopeServer:
 			if _, err := s.Store.GetServer(ctx, sc.TargetID); err != nil {
 				return invalidf("unknown server scope %s", sc.TargetID)
+			}
+		case domain.NotifyScopeManagedCert:
+			if _, err := s.Store.GetManagedCertificate(ctx, sc.TargetID); err != nil {
+				return invalidf("unknown managed certificate scope %s", sc.TargetID)
 			}
 		default:
 			return invalidf("invalid scope kind %q", sc.Kind)

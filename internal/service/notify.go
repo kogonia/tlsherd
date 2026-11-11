@@ -139,7 +139,41 @@ func accountMatchesEvent(acc *domain.NotificationAccount, ev *domain.Event) bool
 	return false
 }
 
+// eventManagedCertID returns the managed certificate id from event details, if any.
+func eventManagedCertID(ev *domain.Event) *uuid.UUID {
+	if ev == nil || len(ev.Details) == 0 {
+		return nil
+	}
+	var details map[string]any
+	if err := json.Unmarshal(ev.Details, &details); err != nil {
+		return nil
+	}
+	raw, ok := details["managed_cert_id"]
+	if !ok || raw == nil {
+		return nil
+	}
+	switch v := raw.(type) {
+	case string:
+		id, err := uuid.Parse(v)
+		if err != nil {
+			return nil
+		}
+		return &id
+	default:
+		// jsonDetails may encode uuid.UUID as a string already; tolerate fmt forms.
+		s := fmt.Sprint(v)
+		id, err := uuid.Parse(s)
+		if err != nil {
+			return nil
+		}
+		return &id
+	}
+}
+
 func (s *Services) accountScopeMatches(ctx context.Context, st store.Store, acc *domain.NotificationAccount, ev *domain.Event) (bool, error) {
+	if managedID := eventManagedCertID(ev); managedID != nil {
+		return s.managedCertScopeMatches(ctx, st, acc, *managedID)
+	}
 	if acc.AllowAll {
 		return true, nil
 	}
@@ -166,6 +200,62 @@ func (s *Services) accountScopeMatches(ctx context.Context, st store.Store, acc 
 	}
 	if ev.DomainID != nil && len(groupIDs) > 0 {
 		return st.DomainInGroups(ctx, *ev.DomainID, groupIDs)
+	}
+	return false, nil
+}
+
+// managedCertScopeMatches applies include_managed + allow_all / managed_cert /
+// domain-or-group-via-link rules for managed-certificate events.
+func (s *Services) managedCertScopeMatches(ctx context.Context, st store.Store, acc *domain.NotificationAccount, managedID uuid.UUID) (bool, error) {
+	if !acc.IncludeManaged {
+		return false, nil
+	}
+	if acc.AllowAll {
+		return true, nil
+	}
+	if len(acc.Scopes) == 0 {
+		return false, nil
+	}
+	var domainIDs, groupIDs []uuid.UUID
+	for _, sc := range acc.Scopes {
+		switch sc.Kind {
+		case domain.NotifyScopeManagedCert:
+			if sc.TargetID == managedID {
+				return true, nil
+			}
+		case domain.NotifyScopeDomain:
+			domainIDs = append(domainIDs, sc.TargetID)
+		case domain.NotifyScopeGroup:
+			groupIDs = append(groupIDs, sc.TargetID)
+		}
+	}
+	if len(domainIDs) == 0 && len(groupIDs) == 0 {
+		return false, nil
+	}
+	linked, err := st.ListManagedCertDomainIDs(ctx, managedID)
+	if err != nil {
+		return false, err
+	}
+	linkedSet := make(map[uuid.UUID]struct{}, len(linked))
+	for _, id := range linked {
+		linkedSet[id] = struct{}{}
+	}
+	for _, did := range domainIDs {
+		if _, ok := linkedSet[did]; ok {
+			return true, nil
+		}
+	}
+	if len(groupIDs) == 0 {
+		return false, nil
+	}
+	for _, did := range linked {
+		ok, err := st.DomainInGroups(ctx, did, groupIDs)
+		if err != nil {
+			return false, err
+		}
+		if ok {
+			return true, nil
+		}
 	}
 	return false, nil
 }

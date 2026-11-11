@@ -320,9 +320,10 @@ const (
 	NotifyOutboxFailed  = "failed"
 	NotifyOutboxSkipped = "skipped"
 
-	NotifyScopeDomain = "domain"
-	NotifyScopeGroup  = "group"
-	NotifyScopeServer = "server"
+	NotifyScopeDomain      = "domain"
+	NotifyScopeGroup       = "group"
+	NotifyScopeServer      = "server"
+	NotifyScopeManagedCert = "managed_cert"
 
 	NotifyStatusNone    = "none"
 	NotifyStatusPending = "pending"
@@ -334,21 +335,23 @@ const (
 
 // NotificationAccount is a non-login recipient of event notifications.
 type NotificationAccount struct {
-	ID         uuid.UUID     `json:"id"`
-	Name       string        `json:"name"`
-	Enabled    bool          `json:"enabled"`
-	AllowAll   bool          `json:"allow_all"`
-	EventTypes []string      `json:"event_types"`
-	Timezone   string        `json:"timezone"`
-	WindowDays []int         `json:"window_days"`
-	WindowFrom string        `json:"window_from"`
-	WindowTo   string        `json:"window_to"`
-	CreatedAt  time.Time     `json:"created_at"`
-	UpdatedAt  time.Time     `json:"updated_at"`
-	Scopes     []NotifyScope `json:"scopes,omitempty"`
+	ID             uuid.UUID     `json:"id"`
+	Name           string        `json:"name"`
+	Enabled        bool          `json:"enabled"`
+	AllowAll       bool          `json:"allow_all"`
+	IncludeManaged bool          `json:"include_managed"`
+	EventTypes     []string      `json:"event_types"`
+	Timezone       string        `json:"timezone"`
+	WindowDays     []int         `json:"window_days"`
+	WindowFrom     string        `json:"window_from"`
+	WindowTo       string        `json:"window_to"`
+	CreatedAt      time.Time     `json:"created_at"`
+	UpdatedAt      time.Time     `json:"updated_at"`
+	Scopes         []NotifyScope `json:"scopes,omitempty"`
 }
 
-// NotifyScope grants a notification account visibility to a domain, group, or server.
+// NotifyScope grants a notification account visibility to a domain, group,
+// server, or managed certificate.
 type NotifyScope struct {
 	Kind     string    `json:"kind"`
 	TargetID uuid.UUID `json:"target_id"`

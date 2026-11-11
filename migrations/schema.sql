@@ -310,6 +310,7 @@ CREATE TABLE notification_accounts (
     name            text NOT NULL,
     enabled         boolean NOT NULL DEFAULT true,
     allow_all       boolean NOT NULL DEFAULT false,
+    include_managed boolean NOT NULL DEFAULT false,
     event_types     text[] NOT NULL DEFAULT '{}',
     timezone        text NOT NULL DEFAULT 'UTC',
     window_days     int[] NOT NULL DEFAULT '{1,2,3,4,5,6,7}',
@@ -321,7 +322,7 @@ CREATE TABLE notification_accounts (
 
 CREATE TABLE notification_scopes (
     account_id      uuid NOT NULL REFERENCES notification_accounts(id) ON DELETE CASCADE,
-    kind            text NOT NULL CHECK (kind IN ('domain', 'group', 'server')),
+    kind            text NOT NULL CHECK (kind IN ('domain', 'group', 'server', 'managed_cert')),
     target_id       uuid NOT NULL,
     PRIMARY KEY (account_id, kind, target_id)
 );

@@ -60,5 +60,12 @@ Default event types for a new account: `cert_expired`, `cert_expiring_soon`,
 `cert_key_mismatch`, `cert_chain_invalid`, `cert_domain_mismatch_confirmed`,
 `endpoint_cert_mismatch`.
 
+**Managed certificates.** Domain leaf events ignore `include_managed`. Managed-cert
+events (details include `managed_cert_id`) notify only when the account has
+**Include managed certificates** enabled, and then if **Allow all**, an explicit
+`managed_cert` scope, or a **domain/group** scope covering any domain linked to
+that managed cert. Operators can view managed certs linked to domains they can
+read; creating unlinked certs stays an administrator task.
+
 Stored under `system_settings.notifications` and related notification tables
 (see `migrations/schema.sql`).

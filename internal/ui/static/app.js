@@ -783,7 +783,7 @@
     const grid = h('div', {class: 'grid dashboard-grid'},
       // row 1
       stat(d.domains, 'Domains', '', '/domains'),
-      IS_ADMIN ? stat(d.managed_certificates || 0, 'Managed certs', '', '/managed-certificates') : null,
+      stat(d.managed_certificates || 0, 'Managed certs', '', '/managed-certificates'),
       stat(online + ' · ' + offline, 'Servers (online · offline)', offline ? 'bad' : '', '/servers'),
       IS_ADMIN ? stat(
         (d.pending_enrollments || 0) + ' · ' + (d.identity_alerts || 0),
@@ -1407,7 +1407,6 @@
     }
 
     async function relatedManagedSection() {
-      if (!IS_ADMIN) return h('div', null);
       const list = (await api('GET', '/managed-certificates?domain_id=' + encodeURIComponent(ID))) || [];
       const rows = list.map((m) => {
         const c = m.current_certificate;
@@ -2008,37 +2007,42 @@
     const pager = pagerBar(state, () => renderList());
     kindFilter.addEventListener('change', () => { state.offset = 0; refresh(); });
 
-    const name = input('name', '', {required: true, pattern: '[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?', placeholder: 'partner-api-ca'});
-    const display = input('display_name', '', {placeholder: 'Partner API CA'});
-    const kind = select('kind', MANAGED_KINDS, 'ca');
-    const notes = h('textarea', {name: 'notes', rows: 2}, '');
-    const createForm = h('form', null,
-      h('div', {class: 'row row-top'},
-        field('Name (slug)', name, 'Path-safe slug; used as agent install dir for mtls_client.'),
-        field('Display name', display),
-        field('Kind', kind)),
-      field('Notes', notes),
-      h('p', null, h('button', {type: 'submit', class: 'primary'}, 'Create')));
-    createForm.addEventListener('submit', async (ev) => {
-      ev.preventDefault();
-      let created;
-      if (await act(createForm.querySelector('button'), async () => {
-        created = await api('POST', '/managed-certificates', {
-          name: name.value.trim(), display_name: display.value.trim(),
-          kind: kind.value, notes: notes.value,
-        });
-      }, 'Created')) location.href = '/managed-certificates/' + created.id;
-    });
-
-    root.replaceChildren(
+    const parts = [
       h('div', {class: 'toolbar'},
         h('label', {class: 'inline'}, 'Kind ', kindFilter),
         search.node,
         button('Refresh', () => refresh())),
       section('Managed certificates', pager.bar, list),
-      section('New managed certificate',
-        h('p', {class: 'help'}, 'CA and allowed client are cert-only (partner trust / inbound mTLS). Our mTLS client needs a private key and can be deployed by agents.'),
+    ];
+    if (IS_ADMIN) {
+      const name = input('name', '', {required: true, pattern: '[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?', placeholder: 'partner-api-ca'});
+      const display = input('display_name', '', {placeholder: 'Partner API CA'});
+      const kind = select('kind', MANAGED_KINDS, 'ca');
+      const notes = h('textarea', {name: 'notes', rows: 2}, '');
+      const createForm = h('form', null,
+        h('div', {class: 'row row-top'},
+          field('Name (slug)', name, 'Path-safe slug; used as agent install dir for mtls_client.'),
+          field('Display name', display),
+          field('Kind', kind)),
+        field('Notes', notes),
+        h('p', null, h('button', {type: 'submit', class: 'primary'}, 'Create')));
+      createForm.addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        let created;
+        if (await act(createForm.querySelector('button'), async () => {
+          created = await api('POST', '/managed-certificates', {
+            name: name.value.trim(), display_name: display.value.trim(),
+            kind: kind.value, notes: notes.value,
+          });
+        }, 'Created')) location.href = '/managed-certificates/' + created.id;
+      });
+      parts.push(section('New managed certificate',
+        h('p', {class: 'help'}, 'CA and allowed client are cert-only (partner trust / inbound mTLS). Our mTLS client needs a private key and can be deployed by agents. Link domains on the certificate page.'),
         createForm));
+    } else {
+      parts.push(h('p', {class: 'help'}, 'Showing managed certificates linked to domains you can access. Ask an administrator to create or link new ones.'));
+    }
+    root.replaceChildren(...parts);
 
     function renderList() {
       return loadInto(list, async () => {
@@ -2558,7 +2562,7 @@
 
     const [srv, domains, mtlsClients] = await Promise.all([
       serversById(), api('GET', '/domains'),
-      IS_ADMIN ? api('GET', '/managed-certificates?kind=mtls_client').catch(() => []) : Promise.resolve([]),
+      api('GET', '/managed-certificates?kind=mtls_client').catch(() => []),
     ]);
     const dmap = new Map((domains || []).map((d) => [d.id, d]));
     const domainOpts = (domains || []).map((d) => [d.id, d.fqdn]);
@@ -3062,11 +3066,12 @@
     async function refresh() {
       await loadInto(list, async () => {
         const accounts = (await api('GET', '/notification-accounts')) || [];
-        return table(['Name', 'Enabled', 'Allow all', 'Types', 'Timezone', ''],
+        return table(['Name', 'Enabled', 'Allow all', 'Managed', 'Types', 'Timezone', ''],
           accounts.map((a) => [
             link('/notification-accounts/' + a.id, a.name),
             a.enabled ? badge('yes', 'ok') : badge('no', 'bad'),
             a.allow_all ? badge('all') : muted((a.scopes || []).length + ' scopes'),
+            a.include_managed ? badge('yes', 'ok') : muted('no'),
             muted((a.event_types || []).length + ' types'),
             code(a.timezone || 'UTC'),
             button('Delete', async (b) => {
@@ -3086,14 +3091,15 @@
   pages['notify-account'] = async function (root) {
     if (!IS_ADMIN) { root.replaceChildren(h('p', {class: 'error'}, 'Admin only')); return; }
     const isNew = PAGE === 'notify-account-new' || !ID || ID === 'new';
-    const [typesMeta, domains, groups, servers] = await Promise.all([
+    const [typesMeta, domains, groups, servers, managedCerts] = await Promise.all([
       api('GET', '/notification-event-types'),
       api('GET', '/domains'),
       api('GET', '/groups'),
       api('GET', '/servers'),
+      api('GET', '/managed-certificates').catch(() => []),
     ]);
     let acc = {
-      name: '', enabled: true, allow_all: false,
+      name: '', enabled: true, allow_all: false, include_managed: false,
       event_types: (typesMeta && typesMeta.defaults) || [],
       timezone: 'UTC', window_days: [1, 2, 3, 4, 5, 6, 7],
       window_from: '00:00', window_to: '24:00', scopes: [],
@@ -3107,6 +3113,7 @@
     const name = h('input', {value: acc.name || ''});
     const enabled = h('input', {type: 'checkbox', checked: !!acc.enabled});
     const allowAll = h('input', {type: 'checkbox', checked: !!acc.allow_all});
+    const includeManaged = h('input', {type: 'checkbox', checked: !!acc.include_managed});
     const tz = timezonePicker(acc.timezone || 'UTC');
     const from = h('input', {value: acc.window_from || '00:00'});
     const to = h('input', {value: acc.window_to || '24:00'});
@@ -3126,6 +3133,8 @@
     const domainScopes = (domains || []).map((d) => scopeBox('domain', d.id, d.fqdn));
     const groupScopes = (groups || []).map((g) => scopeBox('group', g.id, g.name));
     const serverScopes = (servers || []).map((s) => scopeBox('server', s.id, s.display_name || s.id));
+    const managedScopes = (managedCerts || []).map((m) =>
+      scopeBox('managed_cert', m.id, (m.display_name || m.name) + ' (' + m.kind + ')'));
 
     const destBox = h('div', null);
 
@@ -3181,6 +3190,7 @@
         name: name.value.trim(),
         enabled: enabled.checked,
         allow_all: allowAll.checked,
+        include_managed: includeManaged.checked,
         event_types: typeBoxes.filter(([, c]) => c.checked).map(([t]) => t),
         timezone: tz.value(),
         window_days: dayBoxes.filter(([, c]) => c.checked).map(([n]) => n),
@@ -3189,7 +3199,8 @@
         scopes: []
           .concat(domainScopes.filter((s) => s.c.checked).map((s) => ({kind: s.kind, target_id: s.id})))
           .concat(groupScopes.filter((s) => s.c.checked).map((s) => ({kind: s.kind, target_id: s.id})))
-          .concat(serverScopes.filter((s) => s.c.checked).map((s) => ({kind: s.kind, target_id: s.id}))),
+          .concat(serverScopes.filter((s) => s.c.checked).map((s) => ({kind: s.kind, target_id: s.id})))
+          .concat(managedScopes.filter((s) => s.c.checked).map((s) => ({kind: s.kind, target_id: s.id}))),
       };
       if (isNew) {
         let created = null;
@@ -3212,6 +3223,9 @@
           field('Name', name),
           h('label', {class: 'check'}, enabled, 'Enabled'),
           h('label', {class: 'check'}, allowAll, 'Allow all (still filtered by event type)'),
+          h('label', {class: 'check'}, includeManaged, 'Include managed certificates'),
+          h('p', {class: 'help'},
+            'Managed cert events need this flag. With Allow all: every managed cert. Otherwise: explicit managed-cert scopes, or domain/group scopes that cover a linked domain.'),
           field('Timezone', tz.node),
           h('div', null, h('strong', null, 'Working days'),
             h('div', null, dayBoxes.map(([, c, lab]) => h('label', {class: 'check'}, c, lab)))),
@@ -3223,10 +3237,12 @@
               button('Deselect all', () => { typeBoxes.forEach(([, c]) => { c.checked = false; }); })),
             h('div', {class: 'checks'}, typeBoxes.map(([t, c]) => h('label', {class: 'check'}, c, code(t))))),
           h('div', null, h('strong', null, 'Scopes'),
-            h('p', {class: 'muted small'}, 'Ignored when Allow all is on.'),
+            h('p', {class: 'muted small'}, 'Ignored when Allow all is on (except managed still needs Include managed).'),
             h('h3', null, 'Domains'), h('div', null, domainScopes.map((s) => s.el)),
             h('h3', null, 'Groups'), h('div', null, groupScopes.map((s) => s.el)),
-            h('h3', null, 'Servers'), h('div', null, serverScopes.map((s) => s.el))),
+            h('h3', null, 'Servers'), h('div', null, serverScopes.map((s) => s.el)),
+            h('h3', null, 'Managed certificates'), h('div', null,
+              managedScopes.length ? managedScopes.map((s) => s.el) : muted('No managed certificates.'))),
           btns(button('Save', save, 'primary'),
             isNew ? null : button('Delete', async (b) => {
               if (!confirm('Delete this account?')) return;

@@ -10,13 +10,13 @@ import (
 	"github.com/kogonia/tlsherd/internal/domain"
 )
 
-const notifyAccountCols = `id, name, enabled, allow_all, event_types, timezone,
+const notifyAccountCols = `id, name, enabled, allow_all, include_managed, event_types, timezone,
 	window_days, window_from, window_to, created_at, updated_at`
 
 func scanNotifyAccount(r rowScanner) (domain.NotificationAccount, error) {
 	var a domain.NotificationAccount
 	var days []int32
-	err := r.Scan(&a.ID, &a.Name, &a.Enabled, &a.AllowAll, &a.EventTypes, &a.Timezone,
+	err := r.Scan(&a.ID, &a.Name, &a.Enabled, &a.AllowAll, &a.IncludeManaged, &a.EventTypes, &a.Timezone,
 		&days, &a.WindowFrom, &a.WindowTo, &a.CreatedAt, &a.UpdatedAt)
 	if err != nil {
 		return a, err
@@ -72,10 +72,10 @@ func (s *Store) CreateNotificationAccount(ctx context.Context, a *domain.Notific
 	}
 	err := s.q.QueryRow(ctx, `
 		INSERT INTO notification_accounts
-			(id, name, enabled, allow_all, event_types, timezone, window_days, window_from, window_to)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+			(id, name, enabled, allow_all, include_managed, event_types, timezone, window_days, window_from, window_to)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 		RETURNING created_at, updated_at`,
-		a.ID, a.Name, a.Enabled, a.AllowAll, a.EventTypes, a.Timezone,
+		a.ID, a.Name, a.Enabled, a.AllowAll, a.IncludeManaged, a.EventTypes, a.Timezone,
 		intsToInt32s(a.WindowDays), a.WindowFrom, a.WindowTo,
 	).Scan(&a.CreatedAt, &a.UpdatedAt)
 	return mapErr("create notification account", err)
@@ -114,11 +114,11 @@ func (s *Store) ListNotificationAccounts(ctx context.Context) ([]domain.Notifica
 func (s *Store) UpdateNotificationAccount(ctx context.Context, a *domain.NotificationAccount) error {
 	err := s.q.QueryRow(ctx, `
 		UPDATE notification_accounts
-		SET name = $2, enabled = $3, allow_all = $4, event_types = $5, timezone = $6,
-		    window_days = $7, window_from = $8, window_to = $9, updated_at = now()
+		SET name = $2, enabled = $3, allow_all = $4, include_managed = $5, event_types = $6, timezone = $7,
+		    window_days = $8, window_from = $9, window_to = $10, updated_at = now()
 		WHERE id = $1
 		RETURNING updated_at`,
-		a.ID, a.Name, a.Enabled, a.AllowAll, a.EventTypes, a.Timezone,
+		a.ID, a.Name, a.Enabled, a.AllowAll, a.IncludeManaged, a.EventTypes, a.Timezone,
 		intsToInt32s(a.WindowDays), a.WindowFrom, a.WindowTo,
 	).Scan(&a.UpdatedAt)
 	return mapErr("update notification account", err)
