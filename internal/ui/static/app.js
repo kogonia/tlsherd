@@ -2061,7 +2061,9 @@
       const banners = [];
       if (view.conflict) {
         banners.push(h('div', {class: 'banner bad'},
-          'Local config conflict: the agent file changed since this edit. Re-save after reviewing the reported config.'));
+          'Local config conflict: agent.local.cfg on the host no longer matches the base hash of this pending edit (' +
+          shortFp(view.pending_base_hash || '') + ' → reported ' + shortFp(view.reported_hash || '') +
+          '). Review the form (paths included), confirm, and Save for agent pull again to rebase, then restart the agent or wait for the next poll.'));
       } else if (view.pending) {
         banners.push(h('div', {class: 'banner warn'},
           'Pending update revision ' + view.pending_revision + ' (base ' + shortFp(view.pending_base_hash || '') +

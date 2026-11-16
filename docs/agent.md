@@ -90,6 +90,13 @@ local config → Save for agent pull** queues an update on the server; the agent
 the new document, then reloads in-process. The server never opens a connection to
 the agent.
 
+Updates are optimistic: the pending edit stores the last **reported** hash as
+`base_hash`. The agent applies only when its on-disk hash still matches. If the
+host file changed in the meantime (or never matched what the server last saw),
+the agent logs `local config update conflict` and the UI shows a conflict
+banner — **re-save** after reviewing the form so the pending edit rebases onto
+the current reported hash, then restart the agent (or wait for the next poll).
+
 If the active file is missing/corrupt, the agent loads `.prev` (WARN) or empty
 `custom` defaults.
 

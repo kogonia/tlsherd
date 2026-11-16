@@ -31,13 +31,13 @@ type ServerLocalConfigView struct {
 
 // ServiceCatalogEntry is exposed to the UI (web recipe + systemd preset).
 type ServiceCatalogEntry struct {
-	ID            string             `json:"id"`
-	Label         string             `json:"label"`
-	DefaultName   string             `json:"default_name"`
-	VerifyCommand []string           `json:"verify_command"`
-	ReloadCommand []string           `json:"reload_command"`
-	Verify        agentcfg.Verify    `json:"verify"`  // systemd preset
-	Restart       agentcfg.Restart   `json:"restart"` // systemd preset
+	ID            string           `json:"id"`
+	Label         string           `json:"label"`
+	DefaultName   string           `json:"default_name"`
+	VerifyCommand []string         `json:"verify_command"`
+	ReloadCommand []string         `json:"reload_command"`
+	Verify        agentcfg.Verify  `json:"verify"`  // systemd preset
+	Restart       agentcfg.Restart `json:"restart"` // systemd preset
 }
 
 // SetLocalConfigInput is an admin edit of the agent's local config.
@@ -105,6 +105,15 @@ func (s *Services) ReportAgentLocalConfig(ctx context.Context, srv *domain.Serve
 			s.log().Info("pending local config applied by agent",
 				"component", "service", "operation", "local_config_ack",
 				"server_id", cur.ID, "revision", cur.PendingLocalConfigRevision, "hash", hash)
+		} else if cur.PendingLocalConfigBaseHash != "" && cur.PendingLocalConfigBaseHash != hash {
+			// Agent disk drifted from the base used when the admin queued the
+			// edit. Mark conflict as soon as we see the new hash (do not wait
+			// for the agent's next-cycle conflict flag) so the UI asks for a re-save.
+			cur.LocalConfigConflict = true
+			s.log().Warn("pending local config base mismatch",
+				"component", "service", "operation", "local_config_conflict",
+				"server_id", cur.ID, "revision", cur.PendingLocalConfigRevision,
+				"base_hash", cur.PendingLocalConfigBaseHash, "reported_hash", hash)
 		}
 	}
 	if err := s.Store.UpdateServer(ctx, cur); err != nil {
