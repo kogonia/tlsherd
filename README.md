@@ -22,6 +22,7 @@ service, and reports the result. Operators work in an embedded web UI or the JSO
 | **[Server configuration](docs/configuration.md)** | `TLSHERD_*` env, listeners, notifications |
 | **[Operations](docs/operations.md)** | Backup, restore, rollback, operator cheat sheet |
 | **[Deploy samples](deploy/README.md)** | Compose, unit files, sample configs |
+| **[CI](.github/workflows/ci.yml)** | Tests on `main`/PRs; on `v*` tags builds Linux amd64 binaries and creates a GitHub Release |
 
 ## Architecture
 
