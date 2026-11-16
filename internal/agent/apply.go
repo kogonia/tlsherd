@@ -95,8 +95,15 @@ func (a *Agent) processDomain(ctx context.Context, asg Assignment) error {
 			a.state.setCertState(asg, ds)
 			a.saveState()
 		}
-		a.log.Debug("domain already current", "operation", "process", "domain", asg.FQDN, "fingerprint", asg.Fingerprint)
-		return nil
+		// Local-config publish paths can change after the cert was installed;
+		// re-apply so extras (symlinks/copies) catch up without waiting for a
+		// new fingerprint.
+		if a.extrasSatisfied(l, asg) {
+			a.log.Debug("domain already current", "operation", "process", "domain", asg.FQDN, "fingerprint", asg.Fingerprint)
+			return nil
+		}
+		a.log.Info("extra publish paths out of date; re-applying",
+			"operation", "process", "domain", asg.FQDN, "fingerprint", asg.Fingerprint)
 	}
 	if ds.Fingerprint == asg.Fingerprint && installed != asg.Fingerprint {
 		a.log.Info("state matches assignment but installed files do not; re-applying",
@@ -209,19 +216,14 @@ func (a *Agent) stage(ctx context.Context, l layout, asg Assignment, ds DomainSt
 	return a.report(ctx, res)
 }
 
-func (a *Agent) spec(asg Assignment, p *certutil.Parsed) installSpec {
+// installMeta builds mode/names/extra targets for asg without PEM payloads.
+func (a *Agent) installMeta(asg Assignment) installSpec {
 	rt := a.runtimeCFG()
-	fullchain := append([]byte{}, p.CertPEM...)
-	fullchain = append(fullchain, p.ChainPEM...)
 	s := installSpec{
 		fqdn:        asg.FQDN,
 		fingerprint: asg.Fingerprint,
 		mode:        rt.Install.Mode,
 		inst:        rt.Install,
-		cert:        p.CertPEM,
-		key:         p.KeyPEM,
-		chain:       p.ChainPEM,
-		fullchain:   fullchain,
 		extra:       map[string]string{},
 	}
 	if asg.InstallMode != "" {
@@ -260,6 +262,53 @@ func (a *Agent) spec(asg Assignment, p *certutil.Parsed) installSpec {
 		s.extra[name] = abs
 	}
 	return s
+}
+
+func (a *Agent) spec(asg Assignment, p *certutil.Parsed) installSpec {
+	s := a.installMeta(asg)
+	fullchain := append([]byte{}, p.CertPEM...)
+	fullchain = append(fullchain, p.ChainPEM...)
+	s.cert, s.key, s.chain, s.fullchain = p.CertPEM, p.KeyPEM, p.ChainPEM, fullchain
+	return s
+}
+
+// extrasSatisfied reports whether configured extra publish paths already match
+// the active version (symlink target or copied content).
+func (a *Agent) extrasSatisfied(l layout, asg Assignment) bool {
+	s := a.installMeta(asg)
+	if len(s.extra) == 0 {
+		return true
+	}
+	cn, kn, hn, fn := s.names()
+	verDir := l.versionDir(asg.Fingerprint)
+	for _, name := range []string{cn, kn, hn, fn} {
+		p, ok := s.extra[name]
+		if !ok {
+			continue
+		}
+		src := filepath.Join(verDir, name)
+		if name == hn {
+			if _, err := os.Stat(src); errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+		}
+		if s.mode == "copy" {
+			want, err := os.ReadFile(src)
+			if err != nil {
+				return false
+			}
+			got, err := os.ReadFile(p)
+			if err != nil || string(got) != string(want) {
+				return false
+			}
+			continue
+		}
+		got, err := os.Readlink(p)
+		if err != nil || filepath.Clean(got) != filepath.Clean(src) {
+			return false
+		}
+	}
+	return true
 }
 
 // apply performs backup → install → verify → restart → post_check → report.

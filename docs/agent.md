@@ -189,6 +189,11 @@ extra paths) with symlinks.
 **`mode: copy`** — same version store, but `current/` is a real directory of copied
 files (use when the consumer cannot follow symlinks).
 
+If the assigned fingerprint is already installed but extra publish paths are
+missing or stale (for example after adding `fullchain_path` / `key_path` in
+local config), the agent **re-applies** on the next poll so those paths catch up
+(including verify/restart).
+
 Domain assignment paths / `restart_override` from the UI still apply as a **last
 overlay** for that domain only.
 

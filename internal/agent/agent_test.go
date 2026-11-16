@@ -372,6 +372,79 @@ func TestFullchainPathAndCertRootOverride(t *testing.T) {
 	}
 }
 
+func TestExtrasRefreshAfterLocalConfigChange(t *testing.T) {
+	e := newEnv(t)
+	e.seedKey()
+	fp1, b1 := e.srv.addCert(t, testFQDN, inWindowTime.Add(90*24*time.Hour))
+	e.srv.assign(Assignment{FQDN: testFQDN, Fingerprint: fp1})
+
+	// First install: versioned tree only (no extra publish paths).
+	if err := e.run(false); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	staleCRT := filepath.Join(e.certRoot, testFQDN+".crt")
+	staleKey := filepath.Join(e.certRoot, testFQDN+".key")
+	if err := os.WriteFile(staleCRT, []byte("old-crt"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(staleKey, []byte("old-key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Operator adds flat publish paths after the cert is already current.
+	localPath := filepath.Join(e.stateDir, "agent.local.cfg")
+	lc := agentcfg.DefaultLocal()
+	lc.Service = agentcfg.ServiceNginx
+	lc.Verify.Command = []string{"nginx", "-t"}
+	lc.Restart = agentcfg.Restart{Type: "systemd", Name: "nginx", ReloadOnly: true}
+	lc.FullchainPath = "{domain}.crt"
+	lc.KeyPath = "{domain}.key"
+	raw, err := agentcfg.CanonicalLocalJSON(lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(localPath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := Options{
+		Bootstrap: config.AgentBootstrap{
+			ServerURL: e.srv.URL, CertRoot: e.certRoot, StateDir: e.stateDir,
+			LocalConfigPath: localPath, Once: true,
+		},
+		Clock:  e.clock,
+		Runner: e.runner,
+		Sleep:  func(context.Context, time.Duration) error { return nil },
+	}
+	a, err := New(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Run(context.Background()); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+
+	got, err := os.Readlink(staleCRT)
+	if err != nil {
+		t.Fatalf("fullchain publish path: %v", err)
+	}
+	want := filepath.Join(e.certRoot, testFQDN, "versions", fp1, "fullchain.pem")
+	if filepath.Clean(got) != filepath.Clean(want) {
+		t.Fatalf("fullchain link = %q, want %q", got, want)
+	}
+	gotKey, err := os.Readlink(staleKey)
+	if err != nil {
+		t.Fatalf("key publish path: %v", err)
+	}
+	wantKey := filepath.Join(e.certRoot, testFQDN, "versions", fp1, "key.pem")
+	if filepath.Clean(gotKey) != filepath.Clean(wantKey) {
+		t.Fatalf("key link = %q, want %q", gotKey, wantKey)
+	}
+	if body, err := os.ReadFile(staleCRT); err != nil || string(body) != b1.Cert+b1.Chain {
+		t.Fatalf("published fullchain content: %v %q", err, body)
+	}
+}
+
 func TestDryRunMakesNoChanges(t *testing.T) {
 	e := newEnv(t)
 	e.seedKey()
