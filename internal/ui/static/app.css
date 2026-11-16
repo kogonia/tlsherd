@@ -117,7 +117,14 @@ pre { background: var(--surface-2); border: 1px solid var(--line); border-radius
 .nav-text { overflow: hidden; text-overflow: ellipsis; }
 .sidebar-footer {
   flex: 0 0 auto; border-top: 1px solid var(--chrome-line);
+  display: flex; flex-direction: column; align-items: stretch;
 }
+.sidebar-github {
+  display: block; padding: 8px 10px 4px; color: var(--chrome-muted);
+  font-size: 11px; text-align: center; text-decoration: none; white-space: nowrap;
+}
+.sidebar-github:hover { color: #fff; text-decoration: underline; }
+.sidebar-github .nav-abbr { display: none; }
 .nav-toggle {
   display: flex; align-items: center; justify-content: center;
   width: 100%; margin: 0; padding: 10px 8px; border: 0; border-radius: 0;
@@ -134,6 +141,8 @@ body.nav-collapsed .nav-group-label,
 body.nav-collapsed .nav-text { display: none; }
 body.nav-collapsed .nav-abbr { display: inline-block; }
 body.nav-collapsed .nav-link { justify-content: center; padding: 8px 4px; }
+body.nav-collapsed .sidebar-github .nav-text { display: none; }
+body.nav-collapsed .sidebar-github .nav-abbr { display: inline; }
 body.nav-collapsed #nav-collapse { transform: scaleX(-1); }
 
 @media (max-width: 800px) {

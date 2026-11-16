@@ -87,6 +87,9 @@ func TestAuthRedirectAndRoles(t *testing.T) {
 	if !strings.Contains(body, `id="sidebar"`) {
 		t.Error("missing sidebar")
 	}
+	if !strings.Contains(body, `github.com/kogonia/tlsherd/releases`) {
+		t.Error("missing GitHub releases link in sidebar footer")
+	}
 	if !strings.Contains(body, `<a class="brand" href="/">TLS herd</a>`) {
 		t.Error("missing brand → Dashboard link")
 	}
