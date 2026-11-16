@@ -1557,10 +1557,10 @@
       if (locked) sSel.disabled = true;
       const mode = select('install_mode', [['', 'agent default'], ['symlink', 'symlink'], ['copy', 'copy']], initial.install_mode || '');
       const inputs = {
-        cert_path: input('cert_path', initial.cert_path || '', {placeholder: 'leaf; relative to cert_root'}),
-        key_path: input('key_path', initial.key_path || ''),
-        chain_path: input('chain_path', initial.chain_path || ''),
-        fullchain_path: input('fullchain_path', initial.fullchain_path || '', {placeholder: 'leaf+chain; e.g. {domain}.crt'}),
+        cert_path: input('cert_path', initial.cert_path || '', {placeholder: 'leaf only, e.g. {domain}-leaf.crt'}),
+        key_path: input('key_path', initial.key_path || '', {placeholder: 'e.g. {domain}.key'}),
+        chain_path: input('chain_path', initial.chain_path || '', {placeholder: 'intermediates, e.g. {domain}-chain.pem'}),
+        fullchain_path: input('fullchain_path', initial.fullchain_path || '', {placeholder: 'leaf+chain, e.g. {domain}.crt'}),
       };
       const restart = h('textarea', {name: 'restart_override', rows: 3, placeholder: '{"type":"systemd","name":"nginx","reload_only":true}'}, '');
       if (initial.restart_override) restart.value = json(initial.restart_override);
@@ -1571,10 +1571,11 @@
             : field('Server', sSel),
           field('Install mode', mode)),
         h('div', {class: 'row'},
-          field('Certificate path (leaf)', inputs.cert_path),
+          field('Leaf path', inputs.cert_path),
           field('Key path', inputs.key_path),
           field('Chain path', inputs.chain_path),
           field('Fullchain path', inputs.fullchain_path)),
+        h('p', {class: 'help'}, 'Optional per-domain publish paths under cert_root ({domain} ok). Blank = agent local defaults. For nginx flat files: Fullchain={domain}.crt, Key={domain}.key.'),
         field('Restart override (JSON, optional)', restart,
           'Optional per-domain override of the agent local restart section. Prefer editing Agent local config on the server page.'),
         h('p', null, btns(
@@ -2092,15 +2093,15 @@
       const restartPreview = h('div', {class: 'cmd-preview'});
       const restartFields = h('div', {class: 'restart-fields'}, nameField, reloadField, cmdField, restartPreview);
       const installMode = select('install_mode', ['symlink', 'copy'], (src.install && src.install.mode) || 'symlink');
-      const certName = input('cert_name', (src.install && src.install.cert_name) || 'cert.pem');
-      const keyName = input('key_name', (src.install && src.install.key_name) || 'key.pem');
-      const chainName = input('chain_name', (src.install && src.install.chain_name) || 'chain.pem');
-      const fullchainName = input('fullchain_name', (src.install && src.install.fullchain_name) || 'fullchain.pem');
+      const certName = input('cert_name', (src.install && src.install.cert_name) || 'cert.pem', {placeholder: 'cert.pem'});
+      const keyName = input('key_name', (src.install && src.install.key_name) || 'key.pem', {placeholder: 'key.pem'});
+      const chainName = input('chain_name', (src.install && src.install.chain_name) || 'chain.pem', {placeholder: 'chain.pem'});
+      const fullchainName = input('fullchain_name', (src.install && src.install.fullchain_name) || 'fullchain.pem', {placeholder: 'fullchain.pem'});
       const certRoot = input('cert_root', src.cert_root || '', {placeholder: 'e.g. /cert (overrides TLSHERD_CERT_ROOT)'});
-      const certPath = input('cert_path', src.cert_path || '', {placeholder: 'leaf; optional {domain}'});
-      const keyPath = input('key_path', src.key_path || '');
-      const chainPath = input('chain_path', src.chain_path || '');
-      const fullchainPath = input('fullchain_path', src.fullchain_path || '', {placeholder: 'leaf+chain; e.g. {domain}.crt'});
+      const certPath = input('cert_path', src.cert_path || '', {placeholder: 'leaf only, e.g. {domain}-leaf.crt'});
+      const keyPath = input('key_path', src.key_path || '', {placeholder: 'e.g. {domain}.key'});
+      const chainPath = input('chain_path', src.chain_path || '', {placeholder: 'intermediates, e.g. {domain}-chain.pem'});
+      const fullchainPath = input('fullchain_path', src.fullchain_path || '', {placeholder: 'leaf+chain, e.g. {domain}.crt'});
       const strictCert = h('input', {type: 'checkbox', checked: src.strict_cert_check !== false});
       const confirmBox = h('input', {type: 'checkbox'});
 
@@ -2293,11 +2294,24 @@
         h('fieldset', null, h('legend', null, 'Restart'), restartFields),
         h('fieldset', null, h('legend', null, 'Install & paths'),
           field('Install mode', installMode),
-          field('Filenames in versions/current', h('div', {class: 'row'}, certName, keyName, chainName, fullchainName),
-            'fullchain.pem is leaf+intermediates (for nginx ssl_certificate).'),
+          h('div', null,
+            h('span', {class: 'field-group-title'}, 'Filenames in versions/current'),
+            h('div', {class: 'row'},
+              field('Leaf (cert)', certName),
+              field('Key', keyName),
+              field('Chain', chainName),
+              field('Fullchain', fullchainName)),
+            h('span', {class: 'help'}, 'Names inside <fqdn>/versions/<fp>/ and current/. Fullchain is leaf+intermediates (nginx ssl_certificate).')),
           field('Cert root (working directory)', certRoot, 'Where the agent stores <fqdn>/versions and publishes extra paths. Default: TLSHERD_CERT_ROOT (/etc/tls).'),
-          field('Extra publish paths', h('div', {class: 'row'}, certPath, keyPath, chainPath, fullchainPath),
-            'Optional templates with {domain}. Must stay under cert_root. Use fullchain_path for nginx.'),
+          h('div', null,
+            h('span', {class: 'field-group-title'}, 'Extra publish paths'),
+            h('div', {class: 'row'},
+              field('Leaf path', certPath),
+              field('Key path', keyPath),
+              field('Chain path', chainPath),
+              field('Fullchain path', fullchainPath)),
+            h('span', {class: 'help'},
+              'Optional symlinks/copies under cert_root (templates may use {domain}). For flat nginx paths use Fullchain path={domain}.crt and Key path={domain}.key. Leave blank to only use <fqdn>/current/.')),
           h('label', {class: 'check'}, strictCert, 'Validate certificate before install/reload (overrides server schedule when set)')),
         h('p', null, h('label', {class: 'check'}, confirmBox, 'I confirm queuing this local config for the agent to pull')),
         h('p', null, btns(save, resetAll)));
@@ -2619,16 +2633,17 @@
         if (locked) sSel.disabled = true;
         const mode = select('install_mode', [['', 'agent default'], ['symlink', 'symlink'], ['copy', 'copy']], initial.install_mode || '');
         const inputs = {
-          cert_path: input('cert_path', initial.cert_path || ''),
-          key_path: input('key_path', initial.key_path || ''),
-          chain_path: input('chain_path', initial.chain_path || ''),
-          fullchain_path: input('fullchain_path', initial.fullchain_path || ''),
+          cert_path: input('cert_path', initial.cert_path || '', {placeholder: 'leaf only, e.g. {domain}-leaf.crt'}),
+          key_path: input('key_path', initial.key_path || '', {placeholder: 'e.g. {domain}.key'}),
+          chain_path: input('chain_path', initial.chain_path || '', {placeholder: 'intermediates, e.g. {domain}-chain.pem'}),
+          fullchain_path: input('fullchain_path', initial.fullchain_path || '', {placeholder: 'leaf+chain, e.g. {domain}.crt'}),
         };
         const form = h('form', null,
           h('div', {class: 'row'}, field('Server', locked ? h('div', null, available[0].label) : sSel), field('Install mode', mode)),
           h('div', {class: 'row'},
-            field('Cert path', inputs.cert_path), field('Key path', inputs.key_path),
+            field('Leaf path', inputs.cert_path), field('Key path', inputs.key_path),
             field('Chain path', inputs.chain_path), field('Fullchain path', inputs.fullchain_path)),
+          h('p', {class: 'help'}, 'Optional publish paths under cert_root ({domain} ok). Blank = agent local defaults.'),
           h('p', null, btns(
             h('button', {type: 'submit', class: 'primary'}, locked ? 'Save' : 'Add'),
             button('Cancel', closeEditor))));
