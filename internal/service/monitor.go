@@ -913,7 +913,7 @@ func (s *Services) ScanCertificates(ctx context.Context) error {
 		case left <= 0:
 			if err := s.emit(ctx, s.Store, &domain.Event{
 				Type: EvCertExpired, Severity: SeverityCritical, DomainID: &d.ID, CertificateID: &cert.ID, DedupKey: &expKey,
-				Message: fmt.Sprintf("certificate of %s expired on %s", d.FQDN, cert.NotAfter.Format(time.RFC3339)),
+				Message: fmt.Sprintf("certificate of %s expired on %s", d.FQDN, domain.FormatDisplayTime(cert.NotAfter)),
 				Details: jsonDetails(map[string]any{"not_after": cert.NotAfter, "fingerprint": cert.FingerprintSHA256}),
 			}); err != nil {
 				return err
@@ -978,7 +978,7 @@ func (s *Services) ScanAgents(ctx context.Context) error {
 		key := DedupKey(EvAgentOffline, srv.ID.String())
 		if err := s.emit(ctx, s.Store, &domain.Event{
 			Type: EvAgentOffline, Severity: SeverityWarning, ServerID: &srv.ID, DedupKey: &key,
-			Message: fmt.Sprintf("agent %s has not contacted the server since %s", srv.Display(), srv.LastSeenAt.Format(time.RFC3339)),
+			Message: fmt.Sprintf("agent %s has not contacted the server since %s", srv.Display(), domain.FormatDisplayTime(*srv.LastSeenAt)),
 			Details: jsonDetails(map[string]any{"last_seen_at": srv.LastSeenAt}),
 		}); err != nil {
 			return err

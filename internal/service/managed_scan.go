@@ -189,7 +189,7 @@ func (s *Services) syncExpiryEvents(ctx context.Context, t expiryTarget, set mon
 		if err := s.emit(ctx, s.Store, &domain.Event{
 			Type: EvCertExpired, Severity: SeverityCritical, DomainID: t.DomainID, ServerID: t.ServerID,
 			CertificateID: t.CertID, DedupKey: &expKey,
-			Message: fmt.Sprintf("%s expired on %s", t.Label, t.NotAfter.Format(time.RFC3339)),
+			Message: fmt.Sprintf("%s expired on %s", t.Label, domain.FormatDisplayTime(t.NotAfter)),
 			Details: jsonDetails(details),
 		}); err != nil {
 			return err

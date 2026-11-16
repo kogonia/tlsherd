@@ -747,11 +747,11 @@ func (s *Services) UploadManagedCertificate(ctx context.Context, actor *domain.U
 	}
 	if parsed.Expired && !confirmExpired {
 		problems = append(problems, CertProblem{Code: CertProblemExpired,
-			Message: fmt.Sprintf("certificate expired at %s", parsed.NotAfter.Format(time.RFC3339))})
+			Message: fmt.Sprintf("certificate expired at %s", domain.FormatDisplayTime(parsed.NotAfter))})
 	}
 	if parsed.NotYetValid && !confirmNotYet {
 		problems = append(problems, CertProblem{Code: CertProblemNotYetValid,
-			Message: fmt.Sprintf("certificate not valid until %s", parsed.NotBefore.Format(time.RFC3339))})
+			Message: fmt.Sprintf("certificate not valid until %s", domain.FormatDisplayTime(parsed.NotBefore))})
 	}
 	if len(problems) > 0 {
 		return nil, &CertConfirmationError{
@@ -822,7 +822,7 @@ func (s *Services) UploadManagedCertificate(ctx context.Context, actor *domain.U
 			ev := base
 			ev.Type = EvCertExpiredUploadOK
 			ev.Message = fmt.Sprintf("expired certificate (not_after %s) confirmed for managed certificate %s by %s",
-				parsed.NotAfter.Format(time.RFC3339), mc.Name, actor.Login)
+				domain.FormatDisplayTime(parsed.NotAfter), mc.Name, actor.Login)
 			ev.Details = details(map[string]any{"not_after": parsed.NotAfter})
 			if err := s.emit(ctx, tx, &ev); err != nil {
 				return err
@@ -832,7 +832,7 @@ func (s *Services) UploadManagedCertificate(ctx context.Context, actor *domain.U
 			ev := base
 			ev.Type = EvCertNotYetValidUploadOK
 			ev.Message = fmt.Sprintf("not-yet-valid certificate (not_before %s) confirmed for managed certificate %s by %s",
-				parsed.NotBefore.Format(time.RFC3339), mc.Name, actor.Login)
+				domain.FormatDisplayTime(parsed.NotBefore), mc.Name, actor.Login)
 			ev.Details = details(map[string]any{"not_before": parsed.NotBefore})
 			if err := s.emit(ctx, tx, &ev); err != nil {
 				return err

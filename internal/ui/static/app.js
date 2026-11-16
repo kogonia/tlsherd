@@ -192,7 +192,10 @@
   function fmt(ts) {
     if (!ts) return '—';
     const d = new Date(ts);
-    return isNaN(d) ? String(ts) : d.toLocaleString();
+    if (isNaN(d)) return String(ts);
+    const p = (n) => String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
+      ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
   }
 
   function daysLeft(ts) {
@@ -225,10 +228,120 @@
     return href ? h('a', {href}, box) : box;
   }
 
-  function table(headers, rows, empty) {
+  // ---- typed column sorting (text / number / date / ip); empty values sort last
+
+  function cmpEmpty(a, b) {
+    const ae = a == null || a === '';
+    const be = b == null || b === '';
+    if (ae && be) return 0;
+    if (ae) return 1;
+    if (be) return -1;
+    return null;
+  }
+
+  function cmpText(a, b) {
+    const e = cmpEmpty(a, b);
+    if (e !== null) return e;
+    return String(a).localeCompare(String(b), undefined, {sensitivity: 'base', numeric: true});
+  }
+
+  function cmpNumber(a, b) {
+    const e = cmpEmpty(a, b);
+    if (e !== null) return e;
+    const an = Number(a), bn = Number(b);
+    if (isNaN(an) && isNaN(bn)) return 0;
+    if (isNaN(an)) return 1;
+    if (isNaN(bn)) return -1;
+    return an - bn;
+  }
+
+  function cmpDate(a, b) {
+    const e = cmpEmpty(a, b);
+    if (e !== null) return e;
+    const at = new Date(a).getTime(), bt = new Date(b).getTime();
+    if (isNaN(at) && isNaN(bt)) return 0;
+    if (isNaN(at)) return 1;
+    if (isNaN(bt)) return -1;
+    return at - bt;
+  }
+
+  // parseIPKey returns a comparable string for IPv4/IPv6; null if unparseable.
+  function parseIPKey(s) {
+    const t = String(s || '').trim();
+    if (!t) return null;
+    const v4 = t.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (v4) {
+      const parts = v4.slice(1).map(Number);
+      if (parts.some((n) => n > 255)) return null;
+      return '4:' + parts.map((n) => n.toString(16).padStart(2, '0')).join('');
+    }
+    if (t.includes(':')) {
+      // Expand IPv6 (::) into 8 hextets for lexicographic compare.
+      let [head, tail] = t.split('::');
+      const hp = head ? head.split(':').filter(Boolean) : [];
+      const tp = tail ? tail.split(':').filter(Boolean) : [];
+      if (hp.length + tp.length > 8) return '6:' + t.toLowerCase();
+      const mid = Array(8 - hp.length - tp.length).fill('0');
+      const full = hp.concat(mid, tp).map((h) => h.toLowerCase().padStart(4, '0'));
+      return '6:' + full.join('');
+    }
+    return null;
+  }
+
+  function cmpIP(a, b) {
+    const e = cmpEmpty(a, b);
+    if (e !== null) return e;
+    const ak = parseIPKey(a), bk = parseIPKey(b);
+    if (ak && bk) return ak < bk ? -1 : ak > bk ? 1 : 0;
+    if (ak) return -1;
+    if (bk) return 1;
+    return cmpText(a, b);
+  }
+
+  const CMP_BY_TYPE = {text: cmpText, number: cmpNumber, date: cmpDate, ip: cmpIP};
+
+  // sortItems sorts a shallow copy. get(item, key) supplies the sort value; type is text|number|date|ip.
+  function sortItems(items, sort, get) {
+    if (!sort || !sort.key) return items || [];
+    const list = items || [];
+    const dir = sort.dir < 0 ? -1 : 1;
+    const cmp = CMP_BY_TYPE[sort.type] || cmpText;
+    const getter = get || ((row) => row[sort.key]);
+    return list.slice().sort((a, b) => cmp(getter(a, sort.key), getter(b, sort.key)) * dir);
+  }
+
+  // applySortClick updates sort in place: same key toggles dir; new key starts ascending.
+  function applySortClick(sort, key, type) {
+    if (sort.key === key) sort.dir = -(sort.dir || 1);
+    else {
+      sort.key = key;
+      sort.dir = 1;
+      sort.type = type || 'text';
+    }
+  }
+
+  // sortableTh builds a clickable header cell. col = {label, key?, type?, sortable?}.
+  function sortableTh(col, sort, onSort) {
+    if (typeof col === 'string' || col == null) return h('th', null, col || '');
+    const label = col.label != null ? col.label : '';
+    const canSort = col.sortable !== false && col.key && onSort;
+    if (!canSort) return h('th', null, label);
+    const active = sort && sort.key === col.key;
+    const cls = 'sortable' + (active ? (sort.dir < 0 ? ' sort-desc' : ' sort-asc') : '');
+    return h('th', {
+      class: cls,
+      title: 'Sort by ' + label,
+      onclick: () => onSort(col.key, col.type || 'text'),
+    }, label, active ? (sort.dir < 0 ? ' ▾' : ' ▴') : '');
+  }
+
+  // table: headers may be strings or {label, key, type, sortable}.
+  // opts = {sort, onSort(key, type)} for clickable headers.
+  function table(headers, rows, empty, opts) {
     if (!rows.length) return h('p', {class: 'muted'}, empty || 'Nothing to show.');
+    opts = opts || {};
     return h('div', {class: 'tablewrap'}, h('table', null,
-      h('thead', null, h('tr', null, headers.map((x) => h('th', null, x)))),
+      h('thead', null, h('tr', null, headers.map((col) => sortableTh(col, opts.sort, opts.onSort)))),
       h('tbody', null, rows.map((r) => h('tr', null, r.map((c) => h('td', null, c)))))));
   }
 
@@ -801,19 +914,58 @@
     root.replaceChildren(grid);
 
     const expiring = d.expiring || [];
-    root.append(section('Expiring certificates', table(
-      ['Domain', 'Expires', 'Days left'],
-      expiring.map((e) => [link('/domains/' + e.domain_id, e.fqdn), fmt(e.not_after), badge(e.days_left < 0 ? 'expired' : String(e.days_left), e.days_left < 0 ? 'bad' : 'warn')]),
-      'No certificates expire soon.')));
+    const expSort = {key: 'days', dir: 1, type: 'number'};
+    const expSlot = h('div', null);
+    root.append(section('Expiring certificates', expSlot));
+    function paintExpiring() {
+      const sorted = sortItems(expiring, expSort, (e, key) => {
+        if (key === 'domain') return e.fqdn || '';
+        if (key === 'expires') return e.not_after;
+        if (key === 'days') return e.days_left;
+        return '';
+      });
+      expSlot.replaceChildren(table([
+        {label: 'Domain', key: 'domain', type: 'text'},
+        {label: 'Expires', key: 'expires', type: 'date'},
+        {label: 'Days left', key: 'days', type: 'number'},
+      ], sorted.map((e) => [
+        link('/domains/' + e.domain_id, e.fqdn), fmt(e.not_after),
+        badge(e.days_left < 0 ? 'expired' : String(e.days_left), e.days_left < 0 ? 'bad' : 'warn'),
+      ]), 'No certificates expire soon.', {
+        sort: expSort,
+        onSort(key, type) { applySortClick(expSort, key, type); paintExpiring(); },
+      }));
+    }
+    paintExpiring();
 
     if (IS_ADMIN) {
       const s = slot();
       root.append(section('Pending enrollments', s, link('/enrollments', 'Open queue →')));
       loadInto(s, async () => {
-        const list = (await api('GET', '/enrollments?status=pending')) || [];
-        return table(['IP', 'Agent', 'Reason', 'Last seen'],
-          list.slice(0, 8).map((e) => [e.remote_ip, e.client_name || '', reasonBadge(e.reason), fmt(e.last_seen_at)]),
-          'No agents are waiting.');
+        const list = ((await api('GET', '/enrollments?status=pending')) || []).slice(0, 8);
+        const sort = {key: 'last_seen', dir: -1, type: 'date'};
+        const wrap = h('div', null);
+        function paint() {
+          const sorted = sortItems(list, sort, (e, key) => {
+            if (key === 'ip') return e.remote_ip || '';
+            if (key === 'agent') return e.client_name || '';
+            if (key === 'reason') return e.reason || '';
+            if (key === 'last_seen') return e.last_seen_at;
+            return '';
+          });
+          wrap.replaceChildren(table([
+            {label: 'IP', key: 'ip', type: 'ip'},
+            {label: 'Agent', key: 'agent', type: 'text'},
+            {label: 'Reason', key: 'reason', type: 'text'},
+            {label: 'Last seen', key: 'last_seen', type: 'date'},
+          ], sorted.map((e) => [e.remote_ip, e.client_name || '', reasonBadge(e.reason), fmt(e.last_seen_at)]),
+          'No agents are waiting.', {
+            sort,
+            onSort(key, type) { applySortClick(sort, key, type); paint(); },
+          }));
+        }
+        paint();
+        return wrap;
       });
     }
 
@@ -821,7 +973,16 @@
     root.append(section('Open events', ev, link('/events', 'All events →')));
     loadInto(ev, async () => {
       const list = (await api('GET', '/events?limit=10&unresolved=1')) || [];
-      return eventsTable(list, () => location.reload());
+      const sort = {key: 'at', dir: -1, type: 'date'};
+      const wrap = h('div', null);
+      function paint() {
+        wrap.replaceChildren(eventsTable(list, () => location.reload(), null, {
+          sort,
+          onSort(key, type) { applySortClick(sort, key, type); paint(); },
+        }));
+      }
+      paint();
+      return wrap;
     });
   };
 
@@ -858,27 +1019,57 @@
           h('td', null, notifyStatusBadge(n.status), n.last_error ? h('div', {class: 'small muted'}, n.last_error) : null))))));
   }
 
-  function eventsTable(list, onChange, maps) {
+  function eventsTable(list, onChange, maps, opts) {
     const smap = (maps && maps.servers) || new Map();
     const dmap = (maps && maps.domains) || new Map();
-    return table(['When', 'Severity', 'Type', 'Server', 'Domain', 'Message', 'Notify', 'Status', ''],
-      list.map((e) => {
-        const s = e.server_id ? smap.get(e.server_id) : null;
-        const d = e.domain_id ? dmap.get(e.domain_id) : null;
-        return [
-          fmt(e.at), severityBadge(e.severity), code(e.type),
-          s ? link('/servers/' + s.id, serverLabel(s)) : (e.server_id ? code(e.server_id.slice(0, 8)) : muted('—')),
-          d ? link('/domains/' + d.id, d.fqdn) : (e.domain_id ? code(e.domain_id.slice(0, 8)) : muted('—')),
-          h('div', null, e.message, detailsBlock(e.details)),
-          notifyExpand(e),
-          e.resolved_at ? badge('resolved ' + fmt(e.resolved_at), 'ok') : badge('open', 'warn'),
-          e.resolved_at ? '' : button('Dismiss', async (b) => {
-            if (await act(b, () => api('POST', '/events/' + e.id + '/dismiss'), 'Event dismissed')) {
-              if (onChange) onChange();
-            }
-          }),
-        ];
-      }), 'No events.');
+    opts = opts || {};
+    const cols = [
+      {label: 'When', key: 'at', type: 'date'},
+      {label: 'Severity', key: 'severity', type: 'text'},
+      {label: 'Type', key: 'type', type: 'text'},
+      {label: 'Server', key: 'server', type: 'text'},
+      {label: 'Domain', key: 'domain', type: 'text'},
+      {label: 'Message', key: 'message', type: 'text'},
+      {label: 'Notify', key: 'notify', type: 'text'},
+      {label: 'Status', key: 'status', type: 'text'},
+      {label: ''},
+    ];
+    const items = opts.sort && opts.sort.key
+      ? sortItems(list, opts.sort, (e, key) => {
+        if (key === 'at') return e.at;
+        if (key === 'severity') return e.severity || '';
+        if (key === 'type') return e.type || '';
+        if (key === 'server') {
+          const s = e.server_id ? smap.get(e.server_id) : null;
+          return s ? serverLabel(s) : (e.server_id || '');
+        }
+        if (key === 'domain') {
+          const d = e.domain_id ? dmap.get(e.domain_id) : null;
+          return d ? d.fqdn : (e.domain_id || '');
+        }
+        if (key === 'message') return e.message || '';
+        if (key === 'notify') return e.notify_status || '';
+        if (key === 'status') return e.resolved_at || '';
+        return '';
+      })
+      : list;
+    return table(cols, items.map((e) => {
+      const s = e.server_id ? smap.get(e.server_id) : null;
+      const d = e.domain_id ? dmap.get(e.domain_id) : null;
+      return [
+        fmt(e.at), severityBadge(e.severity), code(e.type),
+        s ? link('/servers/' + s.id, serverLabel(s)) : (e.server_id ? code(e.server_id.slice(0, 8)) : muted('—')),
+        d ? link('/domains/' + d.id, d.fqdn) : (e.domain_id ? code(e.domain_id.slice(0, 8)) : muted('—')),
+        h('div', null, e.message, detailsBlock(e.details)),
+        notifyExpand(e),
+        e.resolved_at ? badge('resolved ' + fmt(e.resolved_at), 'ok') : badge('open', 'warn'),
+        e.resolved_at ? '' : button('Dismiss', async (b) => {
+          if (await act(b, () => api('POST', '/events/' + e.id + '/dismiss'), 'Event dismissed')) {
+            if (onChange) onChange();
+          }
+        }),
+      ];
+    }), 'No events.', {sort: opts.sort, onSort: opts.onSort});
   }
 
   function detailsBlock(d) {
@@ -891,6 +1082,7 @@
   pages.enrollments = async function (root) {
     let status = 'pending';
     const state = {limit: 25, offset: 0};
+    const sort = {key: 'last_seen', dir: -1, type: 'date'};
     const list = h('div', null);
     let cache = [];
     let serversCache = [];
@@ -908,6 +1100,16 @@
         button('Refresh', () => refresh())),
       section('Enrollments', pager.bar, list));
 
+    const cols = [
+      {label: 'IP', key: 'ip', type: 'ip'},
+      {label: 'Agent', key: 'agent', type: 'text'},
+      {label: 'Reason', key: 'reason', type: 'text'},
+      {label: 'Keys', key: 'keys', type: 'text'},
+      {label: 'Last seen', key: 'last_seen', type: 'date'},
+      {label: 'Status', key: 'status', type: 'text'},
+      {label: 'Decision'},
+    ];
+
     function matchEnrollment(e, q) {
       if (!q) return true;
       const bits = [
@@ -917,10 +1119,21 @@
       return bits.some((x) => x && String(x).toLowerCase().includes(q));
     }
 
+    function sortVal(e, key) {
+      if (key === 'ip') return e.remote_ip || '';
+      if (key === 'agent') return e.client_name || '';
+      if (key === 'reason') return e.reason || '';
+      if (key === 'keys') return e.presented_key_prefix || e.previous_key_prefix || '';
+      if (key === 'last_seen') return e.last_seen_at;
+      if (key === 'status') return e.status || '';
+      return '';
+    }
+
     function renderList() {
       return loadInto(list, async () => {
         const q = (search.value() || '').toLowerCase().trim();
-        const filtered = !q ? cache : cache.filter((e) => matchEnrollment(e, q));
+        let filtered = !q ? cache.slice() : cache.filter((e) => matchEnrollment(e, q));
+        filtered = sortItems(filtered, sort, sortVal);
         search.setItems(cache.map((e) => ({
           value: e.id,
           label: (e.client_name || e.remote_ip || e.id) + (e.presented_key_prefix ? ' [' + e.presented_key_prefix + ']' : ''),
@@ -929,8 +1142,15 @@
         const page = pageItems(filtered, state);
         pager.update(page.length, filtered.length);
         const rows = page.map((e) => enrollRow(e, serversCache));
-        return table(['IP', 'Agent', 'Reason', 'Keys', 'Last seen', 'Status', 'Decision'], rows,
-          status === 'pending' ? 'No agents are waiting for approval.' : 'No enrollments.');
+        return table(cols, rows,
+          status === 'pending' ? 'No agents are waiting for approval.' : 'No enrollments.', {
+            sort,
+            onSort(key, type) {
+              applySortClick(sort, key, type);
+              state.offset = 0;
+              renderList();
+            },
+          });
       });
     }
 
@@ -1087,10 +1307,16 @@
 
   pages.domains = async function (root) {
     const state = {limit: 25, offset: 0};
+    const sort = {key: 'fqdn', dir: 1, type: 'text'};
+    let expiryFilter = '';
     const list = h('div', null);
     let cache = [];
     const groups = (await api('GET', '/groups')) || [];
     const gname = new Map(groups.map((g) => [g.id, g.name]));
+    const expirySel = select('expiry', [
+      ['', 'All'], ['ok', 'Ok'], ['soon', 'Expiring soon'], ['expired', 'Expired'],
+    ], '');
+    expirySel.addEventListener('change', () => { expiryFilter = expirySel.value; state.offset = 0; renderList(); });
     const search = liveSearch({
       freeText: true, placeholder: 'Search domain, groups, notes…',
       onChange() { state.offset = 0; renderList(); },
@@ -1112,24 +1338,58 @@
       }, 'Domain created')) location.href = '/domains/' + created.id;
     });
     root.replaceChildren(
-      h('div', {class: 'toolbar'}, search.node, button('Refresh', () => refresh())),
+      h('div', {class: 'toolbar'},
+        h('label', {class: 'inline'}, 'Expires ', expirySel),
+        search.node, button('Refresh', () => refresh())),
       section('Domains', pager.bar, list),
       section('New domain', form));
 
+    const cols = [
+      {label: 'Domain', key: 'fqdn', type: 'text'},
+      {label: 'Version', key: 'version', type: 'number'},
+      {label: 'Expires', key: 'expires', type: 'date'},
+      {label: 'Groups', key: 'groups', type: 'text'},
+      {label: 'Notes', key: 'notes', type: 'text'},
+    ];
+
+    function groupsLabel(d) {
+      return (d.group_ids || []).map((id) => gname.get(id) || '').filter(Boolean).join(', ');
+    }
+
     function matchDomain(d, q) {
       if (!q) return true;
-      const groupsLabel = (d.group_ids || []).map((id) => gname.get(id) || '').join(' ');
-      return [d.fqdn, d.notes, groupsLabel].some((x) => x && String(x).toLowerCase().includes(q));
+      return [d.fqdn, d.notes, groupsLabel(d)].some((x) => x && String(x).toLowerCase().includes(q));
+    }
+
+    function matchExpiry(d) {
+      if (!expiryFilter) return true;
+      const c = d.current_certificate;
+      if (!c || !c.not_after) return false;
+      const left = daysLeft(c.not_after);
+      if (expiryFilter === 'expired') return left < 0;
+      if (expiryFilter === 'soon') return left >= 0 && left < 30;
+      if (expiryFilter === 'ok') return left >= 30;
+      return true;
+    }
+
+    function sortVal(d, key) {
+      if (key === 'fqdn') return d.fqdn;
+      if (key === 'version') return d.current_certificate ? d.current_version : null;
+      if (key === 'expires') return d.current_certificate && d.current_certificate.not_after;
+      if (key === 'groups') return groupsLabel(d);
+      if (key === 'notes') return d.notes || '';
+      return '';
     }
 
     function renderList() {
       return loadInto(list, async () => {
         const q = (search.value() || '').toLowerCase().trim();
-        const filtered = !q ? cache : cache.filter((d) => matchDomain(d, q));
+        let filtered = cache.filter((d) => matchDomain(d, q) && matchExpiry(d));
+        filtered = sortItems(filtered, sort, sortVal);
         search.setItems(cache.map((d) => ({
           value: d.id,
           label: d.fqdn,
-          search: [d.fqdn, d.notes, (d.group_ids || []).map((id) => gname.get(id) || '').join(' ')].join(' '),
+          search: [d.fqdn, d.notes, groupsLabel(d)].join(' '),
         })));
         const page = pageItems(filtered, state);
         pager.update(page.length, filtered.length);
@@ -1139,11 +1399,18 @@
             link('/domains/' + d.id, d.fqdn),
             c ? 'v' + d.current_version : muted('no certificate'),
             c ? expiryBadge(c.not_after) : '',
-            (d.group_ids || []).map((id) => gname.get(id) || id.slice(0, 8)).join(', ') || badge('no group', 'warn'),
+            groupsLabel(d) || badge('no group', 'warn'),
             d.notes || '',
           ];
         });
-        return table(['Domain', 'Version', 'Expires', 'Groups', 'Notes'], rows, 'No domains yet.');
+        return table(cols, rows, 'No domains yet.', {
+          sort,
+          onSort(key, type) {
+            applySortClick(sort, key, type);
+            state.offset = 0;
+            renderList();
+          },
+        });
       });
     }
 
@@ -1429,16 +1696,59 @@
 
   // ---- servers
 
+  // Known open-event types that can appear on a server Problems badge / filter.
+  const SERVER_EVENT_PROBLEM_TYPES = [
+    'cert_expired', 'cert_expiring_soon', 'cert_key_mismatch', 'cert_chain_invalid',
+    'cert_domain_mismatch_confirmed', 'cert_expired_upload_confirmed', 'cert_not_yet_valid_upload_confirmed',
+    'cert_upload_rejected', 'cert_rollback_performed', 'cert_ca_mismatch',
+    'managed_cert_identity_change_confirmed',
+    'agent_enroll_pending', 'agent_accepted', 'agent_rejected', 'agent_identity_mismatch',
+    'agent_offline', 'agent_apply_failed', 'agent_verify_failed', 'agent_post_check_mismatch',
+    'agent_config_updated', 'endpoint_down', 'endpoint_cert_mismatch', 'domain_ungrouped',
+  ];
+
+  const SERVER_PROBLEM_FILTER_OPTS = [
+    ['', 'All'],
+    ['ok', 'Ok'],
+    ['offline', 'offline'],
+    ['blocked_identity', 'blocked_identity'],
+    ['endpoints_down', 'endpoints down'],
+    ['local_config_conflict', 'local config conflict'],
+  ].concat(SERVER_EVENT_PROBLEM_TYPES.map((t) => [t, t]));
+
+  // serverProblemKinds returns the problem tokens shown in the Problems column (empty = ok).
+  function serverProblemKinds(s) {
+    const kinds = [];
+    if (s.agent_status === 'offline') kinds.push('offline');
+    if (s.agent_status === 'blocked_identity') kinds.push('blocked_identity');
+    (s.open_event_types || []).forEach((t) => { if (t) kinds.push(t); });
+    if (s.endpoints_unhealthy) kinds.push('endpoints_down');
+    if (s.local_config_conflict) kinds.push('local_config_conflict');
+    return kinds;
+  }
+
   function serverProblems(s) {
-    const bits = [];
-    if (s.agent_status === 'offline' || s.agent_status === 'blocked_identity') {
-      bits.push(badge(s.agent_status, 'bad'));
-    }
-    (s.open_event_types || []).forEach((t) => bits.push(badge(t, s.max_event_severity === 'critical' ? 'bad' : 'warn')));
-    if (s.endpoints_unhealthy) bits.push(badge(s.endpoints_unhealthy + ' endpoint' + (s.endpoints_unhealthy > 1 ? 's' : '') + ' down', 'bad'));
-    if (s.local_config_conflict) bits.push(badge('local config conflict', 'warn'));
-    if (!bits.length) return muted('ok');
-    return h('div', null, bits.map((b, i) => [i ? ' ' : null, b]));
+    const kinds = serverProblemKinds(s);
+    if (!kinds.length) return muted('ok');
+    const crit = s.max_event_severity === 'critical';
+    return h('div', null, kinds.map((k, i) => {
+      let label = k, kind = 'warn';
+      if (k === 'offline' || k === 'blocked_identity') kind = 'bad';
+      else if (k === 'endpoints_down') {
+        label = s.endpoints_unhealthy + ' endpoint' + (s.endpoints_unhealthy > 1 ? 's' : '') + ' down';
+        kind = 'bad';
+      } else if (k === 'local_config_conflict') {
+        label = 'local config conflict';
+      } else {
+        kind = crit ? 'bad' : 'warn';
+      }
+      return [i ? ' ' : null, badge(label, kind)];
+    }));
+  }
+
+  function serverProblemScore(s) {
+    return (s.open_critical || 0) * 100 + (s.open_warning || 0) * 10 + (s.endpoints_unhealthy || 0) +
+      (s.agent_status === 'offline' || s.agent_status === 'blocked_identity' ? 50 : 0);
   }
 
   function endpointIssueBadge(issue) {
@@ -1462,43 +1772,97 @@
 
   pages.servers = async function (root) {
     const state = {limit: 25, offset: 0};
+    // Default: problem score desc (key null until user picks a column).
+    const sort = {key: '', dir: -1, type: 'number'};
+    let agentFilter = '';
+    let problemFilter = '';
     const list = h('div', null);
     const note = h('p', {class: 'muted'}, '');
     let serversCache = [];
     let byServer = new Map();
     let dmap = new Map();
+    const agentSel = select('agent', [
+      ['', 'All'], ['active', 'Active'], ['offline', 'Offline'],
+    ], '');
+    agentSel.addEventListener('change', () => { agentFilter = agentSel.value; state.offset = 0; renderList(); });
+    const problemSel = select('problems', SERVER_PROBLEM_FILTER_OPTS, '');
+    problemSel.addEventListener('change', () => { problemFilter = problemSel.value; state.offset = 0; renderList(); });
     const search = liveSearch({
       freeText: true, placeholder: 'Search servers…',
       onChange() { state.offset = 0; renderList(); },
     });
     const pager = pagerBar(state, () => renderList());
     root.replaceChildren(
-      h('div', {class: 'toolbar'}, search.node, button('Refresh', () => refresh())),
+      h('div', {class: 'toolbar'},
+        h('label', {class: 'inline'}, 'Agent ', agentSel),
+        h('label', {class: 'inline'}, 'Problems ', problemSel),
+        search.node, button('Refresh', () => refresh())),
       section('Servers', pager.bar, note, list));
+
+    const cols = [
+      {label: ''},
+      {label: 'Server', key: 'server', type: 'text'},
+      {label: 'Agent', key: 'agent', type: 'text'},
+      {label: 'Problems', key: 'problems', type: 'number'},
+      {label: 'Last IP', key: 'last_ip', type: 'ip'},
+      {label: 'Last seen', key: 'last_seen', type: 'date'},
+      {label: 'Domains', key: 'domains', type: 'number'},
+      {label: 'Config', key: 'config', type: 'text'},
+      {label: 'Endpoints', key: 'endpoints', type: 'number'},
+    ];
+
+    function sortVal(s, key) {
+      if (key === 'server') return serverLabel(s);
+      if (key === 'agent') return s.agent_status || '';
+      if (key === 'problems') return serverProblemScore(s);
+      if (key === 'last_ip') return s.last_ip || '';
+      if (key === 'last_seen') return s.last_seen_at;
+      if (key === 'domains') return (s.domain_ids || []).length;
+      if (key === 'config') return s.uses_custom_config ? 'custom' : 'defaults';
+      if (key === 'endpoints') return (byServer.get(s.id) || []).length;
+      return '';
+    }
+
+    function matchServer(s) {
+      if (agentFilter && s.agent_status !== agentFilter) return false;
+      if (problemFilter === 'ok') return serverProblemKinds(s).length === 0;
+      if (problemFilter) return serverProblemKinds(s).includes(problemFilter);
+      return true;
+    }
 
     function renderList() {
       const q = (search.value() || '').toLowerCase().trim();
-      const servers = !q ? serversCache
-        : serversCache.filter((s) => serverLabel(s).toLowerCase().includes(q));
+      let servers = serversCache.filter((s) =>
+        (!q || serverLabel(s).toLowerCase().includes(q)) && matchServer(s));
+      if (sort.key) {
+        servers = sortItems(servers, sort, sortVal);
+      } else {
+        servers = servers.slice().sort((a, b) =>
+          serverProblemScore(b) - serverProblemScore(a) ||
+          serverLabel(a).localeCompare(serverLabel(b)));
+      }
       search.setItems(serversCache.map((s) => ({
         value: s.id, label: serverLabel(s), search: serverLabel(s),
       })));
-      const problemCount = servers.filter((s) => (s.open_events || 0) > 0 || s.endpoints_unhealthy || s.agent_status === 'offline' || s.agent_status === 'blocked_identity').length;
+      const problemCount = servers.filter((s) => serverProblemKinds(s).length > 0).length;
       note.textContent = !serversCache.length
         ? 'No servers yet. Agents appear on the Enrollments page after their first contact.'
-        : (problemCount ? problemCount + ' server(s) with problems (sorted first).' : 'No open agent/monitor problems.');
+        : (problemCount ? problemCount + ' server(s) with problems' + (sort.key ? '.' : ' (sorted first).')
+          : 'No open agent/monitor problems.');
 
       const page = pageItems(servers, state);
       pager.update(page.length, servers.length);
       if (!servers.length) {
-        list.replaceChildren(serversCache.length ? h('p', {class: 'muted'}, 'No servers match the search.') : null);
+        list.replaceChildren(serversCache.length ? h('p', {class: 'muted'}, 'No servers match the filters.') : null);
         return;
       }
+      const onSort = (key, type) => {
+        applySortClick(sort, key, type);
+        state.offset = 0;
+        renderList();
+      };
       list.replaceChildren(h('div', {class: 'tablewrap'}, h('table', null,
-        h('thead', null, h('tr', null,
-          h('th', null, ''), h('th', null, 'Server'), h('th', null, 'Agent'), h('th', null, 'Problems'),
-          h('th', null, 'Last IP'), h('th', null, 'Last seen'), h('th', null, 'Domains'), h('th', null, 'Config'),
-          h('th', null, 'Endpoints'))),
+        h('thead', null, h('tr', null, cols.map((col) => sortableTh(col, sort, onSort)))),
         h('tbody', null, page.flatMap((s) => {
           const related = byServer.get(s.id) || [];
           const toggle = h('button', {type: 'button', class: 'link expand-toggle', 'aria-expanded': 'false'}, related.length ? '▸' : '·');
@@ -1536,10 +1900,6 @@
       (eps || []).forEach((ep) => {
         if (!byServer.has(ep.server_id)) byServer.set(ep.server_id, []);
         byServer.get(ep.server_id).push(ep);
-      });
-      serversCache.sort((a, b) => {
-        const score = (s) => (s.open_critical || 0) * 100 + (s.open_warning || 0) * 10 + (s.endpoints_unhealthy || 0) + (s.agent_status === 'offline' || s.agent_status === 'blocked_identity' ? 50 : 0);
-        return score(b) - score(a) || serverLabel(a).localeCompare(serverLabel(b));
       });
       renderList();
     }
@@ -1997,6 +2357,7 @@
 
   pages['managed-certs'] = async function (root) {
     const state = {limit: 25, offset: 0};
+    const sort = {key: 'name', dir: 1, type: 'text'};
     const list = h('div', null);
     let cache = [];
     const kindFilter = select('kind', [['', 'all kinds']].concat(MANAGED_KINDS), '');
@@ -2044,13 +2405,35 @@
     }
     root.replaceChildren(...parts);
 
+    const cols = [
+      {label: 'Certificate', key: 'name', type: 'text'},
+      {label: 'Slug', key: 'slug', type: 'text'},
+      {label: 'Kind', key: 'kind', type: 'text'},
+      {label: 'Domains', key: 'domains', type: 'number'},
+      {label: 'Expires', key: 'expires', type: 'date'},
+      {label: 'Key', key: 'key', type: 'text'},
+      {label: 'Servers', key: 'servers', type: 'number'},
+    ];
+
+    function sortVal(m, key) {
+      if (key === 'name') return m.display_name || m.name || '';
+      if (key === 'slug') return m.name || '';
+      if (key === 'kind') return m.kind || '';
+      if (key === 'domains') return (m.domains || []).length;
+      if (key === 'expires') return m.current_certificate && m.current_certificate.not_after;
+      if (key === 'key') return m.has_key ? 'key' : '';
+      if (key === 'servers') return (m.server_ids || []).length;
+      return '';
+    }
+
     function renderList() {
       return loadInto(list, async () => {
         const q = (search.value() || '').toLowerCase().trim();
-        const filtered = cache.filter((m) => {
+        let filtered = cache.filter((m) => {
           if (q && !(m.name + ' ' + (m.display_name || '') + ' ' + (m.notes || '')).toLowerCase().includes(q)) return false;
           return true;
         });
+        filtered = sortItems(filtered, sort, sortVal);
         search.setItems(cache.map((m) => ({value: m.id, label: m.display_name || m.name, search: m.name + ' ' + (m.display_name || '')})));
         const page = pageItems(filtered, state);
         pager.update(page.length, filtered.length);
@@ -2068,7 +2451,14 @@
             String((m.server_ids || []).length),
           ];
         });
-        return table(['Certificate', 'Slug', 'Kind', 'Domains', 'Expires', 'Key', 'Servers'], rows, 'No managed certificates yet.');
+        return table(cols, rows, 'No managed certificates yet.', {
+          sort,
+          onSort(key, type) {
+            applySortClick(sort, key, type);
+            state.offset = 0;
+            renderList();
+          },
+        });
       });
     }
 
@@ -2338,6 +2728,8 @@
       server_id: params.get('server_id') || '',
       domain_id: params.get('domain_id') || '',
     };
+    const sort = {key: 'at', dir: -1, type: 'date'};
+    let eventsCache = [];
     const tableSlot = h('div', null);
     const [srv, domains] = await Promise.all([serversById(), api('GET', '/domains')]);
     const dmap = new Map((domains || []).map((d) => [d.id, d]));
@@ -2388,6 +2780,19 @@
     const pager = pagerBar(state, () => refresh());
     root.replaceChildren(filterBar, section('Events', pager.bar, tableSlot));
 
+    function renderEvents() {
+      return loadInto(tableSlot, async () => {
+        pager.update(eventsCache.length);
+        return eventsTable(eventsCache, refresh, {servers: srv.map, domains: dmap}, {
+          sort,
+          onSort(key, type) {
+            applySortClick(sort, key, type);
+            renderEvents();
+          },
+        });
+      });
+    }
+
     async function refresh() {
       const q = new URLSearchParams({limit: state.limit, offset: state.offset});
       if (state.type) q.set('type', state.type);
@@ -2395,11 +2800,8 @@
       if (state.unresolved) q.set('unresolved', '1');
       if (state.server_id) q.set('server_id', state.server_id);
       if (state.domain_id) q.set('domain_id', state.domain_id);
-      await loadInto(tableSlot, async () => {
-        const list = (await api('GET', '/events?' + q)) || [];
-        pager.update(list.length);
-        return eventsTable(list, refresh, {servers: srv.map, domains: dmap});
-      });
+      eventsCache = (await api('GET', '/events?' + q)) || [];
+      await renderEvents();
     }
 
     if (IS_ADMIN) {
@@ -2407,6 +2809,8 @@
         limit: 25, offset: 0,
         actor: '', action: '',
       };
+      const auditSort = {key: 'at', dir: -1, type: 'date'};
+      let auditCache = [];
       const auditTable = h('div', null);
       const auditActions = [
         'auth.login', 'auth.login_failed', 'user.create', 'user.update', 'user.delete', 'user.password_reset',
@@ -2458,20 +2862,44 @@
         return h('div', null, a.entity_type + ' ' + a.entity_id);
       }
 
-      async function refreshAudit() {
-        await loadInto(auditTable, async () => {
-          const q = new URLSearchParams({limit: auditState.limit, offset: auditState.offset});
-          if (auditState.actor) q.set('actor', auditState.actor);
-          if (auditState.action) q.set('action', auditState.action);
-          const list = (await api('GET', '/audit?' + q)) || [];
-          auditPager.update(list.length);
-          return table(['When', 'Actor', 'Action', 'Entity', 'Details'],
-            list.map((a) => {
-              const actor = a.actor_display_name || a.actor_login
-                || (a.actor_user_id ? code(a.actor_user_id.slice(0, 8)) : muted('system'));
-              return [fmt(a.at), actor, code(a.action), entityCell(a), detailsBlock(a.details)];
-            }), 'Audit log is empty.');
+      const auditCols = [
+        {label: 'When', key: 'at', type: 'date'},
+        {label: 'Actor', key: 'actor', type: 'text'},
+        {label: 'Action', key: 'action', type: 'text'},
+        {label: 'Entity', key: 'entity', type: 'text'},
+        {label: 'Details'},
+      ];
+
+      function renderAudit() {
+        return loadInto(auditTable, async () => {
+          auditPager.update(auditCache.length);
+          const sorted = sortItems(auditCache, auditSort, (a, key) => {
+            if (key === 'at') return a.at;
+            if (key === 'actor') return a.actor_display_name || a.actor_login || a.actor_user_id || '';
+            if (key === 'action') return a.action || '';
+            if (key === 'entity') return (a.entity_type || '') + ' ' + (a.entity_label || a.entity_id || '');
+            return '';
+          });
+          return table(auditCols, sorted.map((a) => {
+            const actor = a.actor_display_name || a.actor_login
+              || (a.actor_user_id ? code(a.actor_user_id.slice(0, 8)) : muted('system'));
+            return [fmt(a.at), actor, code(a.action), entityCell(a), detailsBlock(a.details)];
+          }), 'Audit log is empty.', {
+            sort: auditSort,
+            onSort(key, type) {
+              applySortClick(auditSort, key, type);
+              renderAudit();
+            },
+          });
         });
+      }
+
+      async function refreshAudit() {
+        const q = new URLSearchParams({limit: auditState.limit, offset: auditState.offset});
+        if (auditState.actor) q.set('actor', auditState.actor);
+        if (auditState.action) q.set('action', auditState.action);
+        auditCache = (await api('GET', '/audit?' + q)) || [];
+        await renderAudit();
       }
       await refreshAudit();
     }
@@ -2482,8 +2910,10 @@
 
   pages.users = async function (root) {
     const state = {limit: 25, offset: 0};
+    const sort = {key: 'login', dir: 1, type: 'text'};
+    let usersCache = [];
     const list = h('div', null);
-    const pager = pagerBar(state, () => refresh());
+    const pager = pagerBar(state, () => renderList());
     const form = h('form', null,
       h('div', {class: 'row'},
         field('Login', input('login', '', {required: true, autocomplete: 'off'})),
@@ -2498,11 +2928,27 @@
     });
     root.replaceChildren(section('New user', form), section('Users', pager.bar, list));
 
-    async function refresh() {
-      await loadInto(list, async () => {
-        const users = (await api('GET', '/users')) || [];
-        const page = pageItems(users, state);
-        pager.update(page.length, users.length);
+    const cols = [
+      {label: 'Login', key: 'login', type: 'text'},
+      {label: 'Name', key: 'name', type: 'text'},
+      {label: 'Role', key: 'role', type: 'text'},
+      {label: 'State', key: 'state', type: 'text'},
+      {label: 'Last login', key: 'last_login', type: 'date'},
+      {label: ''},
+    ];
+
+    function renderList() {
+      return loadInto(list, async () => {
+        const sorted = sortItems(usersCache, sort, (u, key) => {
+          if (key === 'login') return u.login || '';
+          if (key === 'name') return u.display_name || '';
+          if (key === 'role') return u.role || '';
+          if (key === 'state') return u.is_active ? 'active' : 'disabled';
+          if (key === 'last_login') return u.last_login_at;
+          return '';
+        });
+        const page = pageItems(sorted, state);
+        pager.update(page.length, sorted.length);
         const meLogin = (document.body.dataset.login || '').toLowerCase();
         const rows = page.map((u) => {
           const role = select('role', ['operator', 'admin'], u.role);
@@ -2537,8 +2983,20 @@
               }, 'danger')),
           ];
         });
-        return table(['Login', 'Name', 'Role', 'State', 'Last login', ''], rows, 'No users.');
+        return table(cols, rows, 'No users.', {
+          sort,
+          onSort(key, type) {
+            applySortClick(sort, key, type);
+            state.offset = 0;
+            renderList();
+          },
+        });
       });
+    }
+
+    async function refresh() {
+      usersCache = (await api('GET', '/users')) || [];
+      await renderList();
     }
     await refresh();
   };
@@ -2547,6 +3005,7 @@
 
   pages.monitor = async function (root) {
     const state = {limit: 25, offset: 0};
+    const sort = {key: 'endpoint', dir: 1, type: 'text'};
     const summary = h('div', null);
     const filterBar = h('div', {class: 'toolbar'});
     const list = h('div', null);
@@ -2757,12 +3216,47 @@
     }
 
     function resultTable(rs) {
-      return table(['Checked', 'IP', 'Reachable', 'TLS', 'Fingerprint', 'Expires', 'Issuer', 'Latency', 'Error'],
-        rs.map((r) => [fmt(r.checked_at), r.connected_ip || muted('—'),
+      const sortR = {key: 'checked', dir: -1, type: 'date'};
+      const cols = [
+        {label: 'Checked', key: 'checked', type: 'date'},
+        {label: 'IP', key: 'ip', type: 'ip'},
+        {label: 'Reachable', key: 'reachable', type: 'text'},
+        {label: 'TLS', key: 'tls', type: 'text'},
+        {label: 'Fingerprint', key: 'fp', type: 'text'},
+        {label: 'Expires', key: 'expires', type: 'date'},
+        {label: 'Issuer', key: 'issuer', type: 'text'},
+        {label: 'Latency', key: 'latency', type: 'number'},
+        {label: 'Error', key: 'error', type: 'text'},
+      ];
+      const wrap = h('div', null);
+      function paint() {
+        const sorted = sortItems(rs, sortR, (r, key) => {
+          if (key === 'checked') return r.checked_at;
+          if (key === 'ip') return r.connected_ip || '';
+          if (key === 'reachable') return r.reachable ? 'yes' : 'no';
+          if (key === 'tls') return r.tls_ok ? 'ok' : 'fail';
+          if (key === 'fp') return r.peer_fingerprint || '';
+          if (key === 'expires') return r.peer_not_after;
+          if (key === 'issuer') return r.issuer || '';
+          if (key === 'latency') return r.latency_ms;
+          if (key === 'error') return r.error || '';
+          return '';
+        });
+        wrap.replaceChildren(table(cols, sorted.map((r) => [
+          fmt(r.checked_at), r.connected_ip || muted('—'),
           r.reachable ? badge('yes', 'ok') : badge('no', 'bad'), r.tls_ok ? badge('ok', 'ok') : badge('fail', 'bad'),
           r.peer_fingerprint ? code(shortFp(r.peer_fingerprint)) : '', r.peer_not_after ? expiryBadge(r.peer_not_after) : '',
-          r.issuer || '', r.latency_ms === null || r.latency_ms === undefined ? '' : r.latency_ms + ' ms', r.error || '']),
-        'No results yet.');
+          r.issuer || '', r.latency_ms === null || r.latency_ms === undefined ? '' : r.latency_ms + ' ms', r.error || '',
+        ]), 'No results yet.', {
+          sort: sortR,
+          onSort(key, type) {
+            applySortClick(sortR, key, type);
+            paint();
+          },
+        }));
+      }
+      paint();
+      return wrap;
     }
 
     async function refresh(refetch) {
@@ -2783,7 +3277,7 @@
           search: url + ' ' + (s ? serverLabel(s) : ''),
         };
       }));
-      const filtered = eps.filter((ep) => {
+      let filtered = eps.filter((ep) => {
         if (fs && ep.server_id !== fs) return false;
         if (fd && ep.domain_id !== fd) return false;
         if (issue === 'ok') {
@@ -2799,6 +3293,20 @@
           if (!hay.includes(q)) return false;
         }
         return true;
+      });
+      filtered = sortItems(filtered, sort, (ep, key) => {
+        if (key === 'endpoint') return ep.host + ':' + ep.port;
+        if (key === 'server') {
+          const s = srv.map.get(ep.server_id);
+          return s ? serverLabel(s) : '';
+        }
+        if (key === 'domain') {
+          const d = ep.domain_id ? dmap.get(ep.domain_id) : null;
+          return d ? d.fqdn : '';
+        }
+        if (key === 'issue') return ep.issue || 'ok';
+        if (key === 'latest') return ep.latest && ep.latest.checked_at;
+        return '';
       });
       const counts = {total: filtered.length, unhealthy: 0, unreachable: 0, tls_fail: 0, cert_expired: 0, cert_expiring: 0, not_checked: 0};
       filtered.forEach((ep) => {
@@ -2816,6 +3324,14 @@
           stat(counts.cert_expired + counts.cert_expiring, 'Cert expiry', (counts.cert_expired || counts.cert_expiring) ? 'warn' : '', null),
           stat(counts.not_checked, 'Not checked', counts.not_checked ? 'warn' : '', null))));
 
+      const cols = [
+        {label: 'Endpoint', key: 'endpoint', type: 'text'},
+        {label: 'Server', key: 'server', type: 'text'},
+        {label: 'Domain', key: 'domain', type: 'text'},
+        {label: 'Issue', key: 'issue', type: 'text'},
+        {label: 'Latest', key: 'latest', type: 'date'},
+        {label: ''},
+      ];
       await loadInto(list, async () => {
         const page = pageItems(filtered, state);
         pager.update(page.length, filtered.length);
@@ -2851,7 +3367,14 @@
               }, 'danger')),
           ];
         });
-        return table(['Endpoint', 'Server', 'Domain', 'Issue', 'Latest', ''], rows, 'No endpoints. Add one below.');
+        return table(cols, rows, 'No endpoints. Add one below.', {
+          sort,
+          onSort(key, type) {
+            applySortClick(sort, key, type);
+            state.offset = 0;
+            refresh(false);
+          },
+        });
       });
     }
 
@@ -3056,6 +3579,8 @@
 
   pages['notify-accounts'] = async function (root) {
     if (!IS_ADMIN) { root.replaceChildren(h('p', {class: 'error'}, 'Admin only')); return; }
+    const sort = {key: 'name', dir: 1, type: 'text'};
+    let accountsCache = [];
     const list = h('div', null);
     root.replaceChildren(
       h('div', {class: 'toolbar'},
@@ -3063,23 +3588,46 @@
         button('Refresh', () => refresh()),
         link('/settings/notifications', 'Channel settings →')),
       list);
-    async function refresh() {
-      await loadInto(list, async () => {
-        const accounts = (await api('GET', '/notification-accounts')) || [];
-        return table(['Name', 'Enabled', 'Allow all', 'Managed', 'Types', 'Timezone', ''],
-          accounts.map((a) => [
-            link('/notification-accounts/' + a.id, a.name),
-            a.enabled ? badge('yes', 'ok') : badge('no', 'bad'),
-            a.allow_all ? badge('all') : muted((a.scopes || []).length + ' scopes'),
-            a.include_managed ? badge('yes', 'ok') : muted('no'),
-            muted((a.event_types || []).length + ' types'),
-            code(a.timezone || 'UTC'),
-            button('Delete', async (b) => {
-              if (!confirm('Delete notification account “' + a.name + '”?')) return;
-              if (await act(b, () => api('DELETE', '/notification-accounts/' + a.id), 'Deleted')) refresh();
-            }, 'danger'),
-          ]), 'No notification accounts yet.');
+    const cols = [
+      {label: 'Name', key: 'name', type: 'text'},
+      {label: 'Enabled', key: 'enabled', type: 'text'},
+      {label: 'Allow all', key: 'allow_all', type: 'text'},
+      {label: 'Managed', key: 'managed', type: 'text'},
+      {label: 'Types', key: 'types', type: 'number'},
+      {label: 'Timezone', key: 'timezone', type: 'text'},
+      {label: ''},
+    ];
+    function renderList() {
+      return loadInto(list, async () => {
+        const sorted = sortItems(accountsCache, sort, (a, key) => {
+          if (key === 'name') return a.name || '';
+          if (key === 'enabled') return a.enabled ? 'yes' : 'no';
+          if (key === 'allow_all') return a.allow_all ? 'all' : String((a.scopes || []).length);
+          if (key === 'managed') return a.include_managed ? 'yes' : 'no';
+          if (key === 'types') return (a.event_types || []).length;
+          if (key === 'timezone') return a.timezone || 'UTC';
+          return '';
+        });
+        return table(cols, sorted.map((a) => [
+          link('/notification-accounts/' + a.id, a.name),
+          a.enabled ? badge('yes', 'ok') : badge('no', 'bad'),
+          a.allow_all ? badge('all') : muted((a.scopes || []).length + ' scopes'),
+          a.include_managed ? badge('yes', 'ok') : muted('no'),
+          muted((a.event_types || []).length + ' types'),
+          code(a.timezone || 'UTC'),
+          button('Delete', async (b) => {
+            if (!confirm('Delete notification account “' + a.name + '”?')) return;
+            if (await act(b, () => api('DELETE', '/notification-accounts/' + a.id), 'Deleted')) refresh();
+          }, 'danger'),
+        ]), 'No notification accounts yet.', {
+          sort,
+          onSort(key, type) { applySortClick(sort, key, type); renderList(); },
+        });
       });
+    }
+    async function refresh() {
+      accountsCache = (await api('GET', '/notification-accounts')) || [];
+      await renderList();
     }
     await refresh();
   };

@@ -17,6 +17,14 @@ const (
 	ThemeDark  = "dark"
 )
 
+// DisplayTime is the layout for human-readable timestamps in UI-facing messages (UTC).
+const DisplayTime = "2006-01-02 15:04:05"
+
+// FormatDisplayTime formats t as UTC wall time YYYY-MM-DD HH:mm:ss.
+func FormatDisplayTime(t time.Time) string {
+	return t.UTC().Format(DisplayTime)
+}
+
 // ValidTheme reports whether t is a supported UI theme.
 func ValidTheme(t string) bool {
 	return t == ThemeLight || t == ThemeDark
@@ -251,15 +259,15 @@ type ManagedCertificate struct {
 
 // ManagedCertificateVersion versions a managed certificate (mirrors DomainCertificate).
 type ManagedCertificateVersion struct {
-	ID              uuid.UUID  `json:"id"`
-	ManagedCertID   uuid.UUID  `json:"managed_cert_id"`
-	CertificateID   uuid.UUID  `json:"certificate_id"`
-	Version         int        `json:"version"`
-	IsCurrent       bool       `json:"is_current"`
-	ActivatedAt     time.Time  `json:"activated_at"`
-	DeactivatedAt   *time.Time `json:"deactivated_at,omitempty"`
-	ActivatedBy     *uuid.UUID `json:"activated_by,omitempty"`
-	Reason          string     `json:"reason"`
+	ID            uuid.UUID  `json:"id"`
+	ManagedCertID uuid.UUID  `json:"managed_cert_id"`
+	CertificateID uuid.UUID  `json:"certificate_id"`
+	Version       int        `json:"version"`
+	IsCurrent     bool       `json:"is_current"`
+	ActivatedAt   time.Time  `json:"activated_at"`
+	DeactivatedAt *time.Time `json:"deactivated_at,omitempty"`
+	ActivatedBy   *uuid.UUID `json:"activated_by,omitempty"`
+	Reason        string     `json:"reason"`
 }
 
 // ManagedCertServer assigns an mtls_client managed cert to a server for agent install.

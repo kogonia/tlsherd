@@ -159,14 +159,14 @@ func (s *Services) UploadCertificate(ctx context.Context, actor *domain.User, do
 		problems = append(problems, CertProblem{
 			Code: CertProblemExpired,
 			Message: fmt.Sprintf("certificate expired at %s",
-				parsed.NotAfter.Format(time.RFC3339)),
+				domain.FormatDisplayTime(parsed.NotAfter)),
 		})
 	}
 	if parsed.NotYetValid && !confirmNotYet {
 		problems = append(problems, CertProblem{
 			Code: CertProblemNotYetValid,
 			Message: fmt.Sprintf("certificate not valid until %s",
-				parsed.NotBefore.Format(time.RFC3339)),
+				domain.FormatDisplayTime(parsed.NotBefore)),
 		})
 	}
 	if !covers && !confirmMismatch {
@@ -253,7 +253,7 @@ func (s *Services) UploadCertificate(ctx context.Context, actor *domain.User, do
 				Type: EvCertExpiredUploadOK, Severity: SeverityWarning,
 				DomainID: &d.ID, CertificateID: &cert.ID, ActorUserID: actorID(actor),
 				Message: fmt.Sprintf("expired certificate (not_after %s) confirmed for %s by %s",
-					parsed.NotAfter.Format(time.RFC3339), d.FQDN, actor.Login),
+					domain.FormatDisplayTime(parsed.NotAfter), d.FQDN, actor.Login),
 				Details: jsonDetails(map[string]any{
 					"not_after": parsed.NotAfter, "fingerprint": cert.FingerprintSHA256, "actor": actor.Login,
 				}),
@@ -266,7 +266,7 @@ func (s *Services) UploadCertificate(ctx context.Context, actor *domain.User, do
 				Type: EvCertNotYetValidUploadOK, Severity: SeverityWarning,
 				DomainID: &d.ID, CertificateID: &cert.ID, ActorUserID: actorID(actor),
 				Message: fmt.Sprintf("not-yet-valid certificate (not_before %s) confirmed for %s by %s",
-					parsed.NotBefore.Format(time.RFC3339), d.FQDN, actor.Login),
+					domain.FormatDisplayTime(parsed.NotBefore), d.FQDN, actor.Login),
 				Details: jsonDetails(map[string]any{
 					"not_before": parsed.NotBefore, "fingerprint": cert.FingerprintSHA256, "actor": actor.Login,
 				}),
