@@ -1,5 +1,8 @@
 # TLS herd control plane + PostgreSQL.
 #
+# Project name is fixed so containers/networks are tlsherd-*, not deploy-*.
+name: tlsherd
+#
 # From the repository root:
 #   export TLSHERD_DB_PASSWORD='choose-a-long-random-password'
 #   # Optional first boot: also set bootstrap credentials (see README).
@@ -66,6 +69,7 @@ services:
 
 networks:
   tlsherd:
+    name: tlsherd
 
 volumes:
   tlsherd-pgdata:
