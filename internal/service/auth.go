@@ -78,12 +78,13 @@ func (s *Services) Login(ctx context.Context, login, password string, ip netip.A
 		return nil, fmt.Errorf("login: new token: %w", err)
 	}
 	now := s.now()
+	idle, _ := s.SessionLimits(ctx)
 	sess := &domain.Session{
 		UserID:     u.ID,
 		TokenHash:  hash,
 		CreatedAt:  now,
 		LastSeenAt: now,
-		ExpiresAt:  now.Add(SessionIdleTimeout),
+		ExpiresAt:  now.Add(idle),
 		UserAgent:  truncate(userAgent, 256),
 	}
 	if ip.IsValid() {
@@ -151,7 +152,8 @@ func (s *Services) LookupSession(ctx context.Context, token string) (*domain.Use
 		return nil, nil, fmt.Errorf("lookup session: %w", err)
 	}
 	now := s.now()
-	absolute := sess.CreatedAt.Add(SessionMaxLifetime)
+	idle, maxDur := s.SessionLimits(ctx)
+	absolute := sess.CreatedAt.Add(maxDur)
 	if !sess.ExpiresAt.After(now) || !absolute.After(now) {
 		_ = s.Store.DeleteSession(ctx, sess.ID)
 		return nil, nil, domain.ErrUnauthorized
@@ -168,7 +170,7 @@ func (s *Services) LookupSession(ctx context.Context, token string) (*domain.Use
 		return nil, nil, domain.ErrUnauthorized
 	}
 	if now.Sub(sess.LastSeenAt) >= sessionTouchInterval {
-		extend := now.Add(SessionIdleTimeout)
+		extend := now.Add(idle)
 		if extend.After(absolute) {
 			extend = absolute
 		}
@@ -192,7 +194,7 @@ func (s *Services) ChangeOwnPassword(ctx context.Context, actor *domain.User, ol
 			return domain.ErrUnauthorized
 		}
 	}
-	hash, err := auth.HashPassword(newPassword)
+	hash, err := auth.HashPassword(newPassword, s.EffectivePasswordMinLength(ctx))
 	if err != nil {
 		return invalidf("%s", err.Error())
 	}
@@ -276,7 +278,8 @@ func (s *Services) EnsureBootstrapAdmin(ctx context.Context, login string) error
 	}
 	u := &domain.User{
 		Login: login, DisplayName: login, PasswordHash: hash,
-		Role: domain.RoleAdmin, IsActive: true, MustChangePassword: true,
+		Role: domain.RoleAdmin, Theme: s.EffectiveDefaultTheme(ctx),
+		IsActive: true, MustChangePassword: true,
 	}
 	created := false
 	err = s.Store.Tx(ctx, func(tx store.Store) error {
@@ -315,7 +318,7 @@ func (s *Services) BootstrapAdmin(ctx context.Context, login, password, displayN
 	if !loginRe.MatchString(login) {
 		return nil, invalidf("login must be 3-64 characters: letters, digits, . _ @ -")
 	}
-	hash, err := auth.HashPassword(password)
+	hash, err := auth.HashPassword(password, s.EffectivePasswordMinLength(ctx))
 	if err != nil {
 		return nil, invalidf("%s", err.Error())
 	}
@@ -324,7 +327,8 @@ func (s *Services) BootstrapAdmin(ctx context.Context, login, password, displayN
 	}
 	u := &domain.User{
 		Login: login, DisplayName: displayName, PasswordHash: hash,
-		Role: domain.RoleAdmin, IsActive: true, MustChangePassword: true,
+		Role: domain.RoleAdmin, Theme: s.EffectiveDefaultTheme(ctx),
+		IsActive: true, MustChangePassword: true,
 	}
 	err = s.Store.Tx(ctx, func(tx store.Store) error {
 		existing, err := tx.ListUsers(ctx)

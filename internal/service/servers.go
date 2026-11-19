@@ -20,6 +20,8 @@ type ServerView struct {
 	Label     string      `json:"label"` // display_name or IP
 	KeyPrefix string      `json:"key_prefix,omitempty"`
 	DomainIDs []uuid.UUID `json:"domain_ids"`
+	// AgentVersionOutdated is true when general min_agent_version is set and this agent is below it.
+	AgentVersionOutdated bool `json:"agent_version_outdated,omitempty"`
 	// Problems summarizes open alarms for the list/detail pages.
 	OpenEvents         int      `json:"open_events"`
 	OpenCritical       int      `json:"open_critical"`
@@ -77,6 +79,7 @@ type RotateResult struct {
 
 func (s *Services) serverView(ctx context.Context, sv domain.Server) (*ServerView, error) {
 	v := &ServerView{Server: sv, Label: sv.Display(), DomainIDs: []uuid.UUID{}}
+	v.AgentVersionOutdated = s.AgentVersionOutdated(ctx, sv.AgentVersion)
 	if p, err := s.Store.ActiveKeyPrefix(ctx, sv.ID); err == nil {
 		v.KeyPrefix = p
 	} else if !errors.Is(err, domain.ErrNotFound) {

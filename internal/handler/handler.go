@@ -121,6 +121,7 @@ func (h *Handler) mountAdminAPI(mux *http.ServeMux) {
 	mux.Handle("DELETE /api/v1/domains/{id}", h.authed(h.deleteDomain))
 	mux.Handle("GET /api/v1/domains/{id}/groups", h.authed(h.getDomainGroups))
 	mux.Handle("PUT /api/v1/domains/{id}/groups", h.authed(h.setDomainGroups))
+	mux.Handle("PATCH /api/v1/domains/{id}/deploy-asap", h.authed(h.setDomainDeployASAP))
 
 	// Certificates
 	mux.Handle("POST /api/v1/domains/{id}/certificates", h.authed(h.uploadCertificate))
@@ -147,6 +148,7 @@ func (h *Handler) mountAdminAPI(mux *http.ServeMux) {
 	mux.Handle("DELETE /api/v1/managed-certificates/{id}", h.authed(h.deleteManagedCert))
 	mux.Handle("POST /api/v1/managed-certificates/{id}/certificates", h.authed(h.uploadManagedCert))
 	mux.Handle("GET /api/v1/managed-certificates/{id}/versions", h.authed(h.listManagedCertVersions))
+	mux.Handle("PATCH /api/v1/managed-certificates/{id}/deploy-asap", h.authed(h.setManagedDeployASAP))
 	mux.Handle("GET /api/v1/managed-certificates/{id}/servers", h.authed(h.listManagedCertServers))
 	mux.Handle("PUT /api/v1/managed-certificates/{id}/servers/{serverID}", h.authed(h.upsertManagedCertServer))
 	mux.Handle("DELETE /api/v1/managed-certificates/{id}/servers/{serverID}", h.authed(h.removeManagedCertServer))
@@ -171,6 +173,8 @@ func (h *Handler) mountAdminAPI(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/settings/agent-services", h.authed(h.listAgentServices))
 
 	// Settings (admin)
+	mux.Handle("GET /api/v1/settings/general", h.authed(h.getGeneralSettings))
+	mux.Handle("PUT /api/v1/settings/general", h.authed(h.putGeneralSettings))
 	mux.Handle("GET /api/v1/settings/agent-defaults", h.authed(h.getAgentDefaults))
 	mux.Handle("PUT /api/v1/settings/agent-defaults", h.authed(h.putAgentDefaults))
 	mux.Handle("GET /api/v1/settings/monitor", h.authed(h.getMonitorSettings))
@@ -190,6 +194,11 @@ func (h *Handler) mountAdminAPI(mux *http.ServeMux) {
 	mux.Handle("PUT /api/v1/notification-accounts/{id}/destinations/{destID}", h.authed(h.putNotificationDestination))
 	mux.Handle("DELETE /api/v1/notification-accounts/{id}/destinations/{destID}", h.authed(h.deleteNotificationDestination))
 	mux.Handle("GET /api/v1/notification-event-types", h.authed(h.listEventTypes))
+
+	// Notification outbox (admin)
+	mux.Handle("GET /api/v1/notifications/outbox", h.authed(h.listNotificationOutbox))
+	mux.Handle("POST /api/v1/notifications/outbox/{id}/retry", h.authed(h.retryNotificationOutbox))
+	mux.Handle("POST /api/v1/notifications/outbox/{id}/dismiss", h.authed(h.dismissNotificationOutbox))
 
 	// Monitor, events, audit, dashboard
 	mux.Handle("GET /api/v1/monitor/endpoints", h.authed(h.listEndpoints))

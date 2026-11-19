@@ -95,12 +95,12 @@ func (s *Store) SetManagedCertDomains(ctx context.Context, managedCertID uuid.UU
 
 // Managed certificate versions
 
-const managedVersionCols = `id, managed_cert_id, certificate_id, version, is_current, activated_at,
+const managedVersionCols = `id, managed_cert_id, certificate_id, version, is_current, deploy_asap, activated_at,
 	deactivated_at, activated_by, reason`
 
 func scanManagedVersion(r rowScanner) (domain.ManagedCertificateVersion, error) {
 	var mv domain.ManagedCertificateVersion
-	err := r.Scan(&mv.ID, &mv.ManagedCertID, &mv.CertificateID, &mv.Version, &mv.IsCurrent,
+	err := r.Scan(&mv.ID, &mv.ManagedCertID, &mv.CertificateID, &mv.Version, &mv.IsCurrent, &mv.DeployASAP,
 		&mv.ActivatedAt, &mv.DeactivatedAt, &mv.ActivatedBy, &mv.Reason)
 	return mv, err
 }
@@ -143,16 +143,17 @@ func (s *Store) ActivateManagedCertificateVersion(ctx context.Context, mv *domai
 
 		row := q.QueryRow(ctx, `
 			INSERT INTO managed_certificate_versions
-				(id, managed_cert_id, certificate_id, version, is_current, activated_at, activated_by, reason)
-			VALUES ($1, $2, $3, $4, true, $5, $6, $7)
+				(id, managed_cert_id, certificate_id, version, is_current, deploy_asap, activated_at, activated_by, reason)
+			VALUES ($1, $2, $3, $4, true, $5, $6, $7, $8)
 			ON CONFLICT (managed_cert_id, version) DO UPDATE
 			SET is_current = true,
+			    deploy_asap = EXCLUDED.deploy_asap,
 			    activated_at = EXCLUDED.activated_at,
 			    deactivated_at = NULL,
 			    activated_by = EXCLUDED.activated_by,
 			    reason = EXCLUDED.reason
 			RETURNING `+managedVersionCols,
-			newID(mv.ID), mv.ManagedCertID, mv.CertificateID, version, activatedAt, mv.ActivatedBy, mv.Reason)
+			newID(mv.ID), mv.ManagedCertID, mv.CertificateID, version, mv.DeployASAP, activatedAt, mv.ActivatedBy, mv.Reason)
 		got, err := scanManagedVersion(row)
 		if err != nil {
 			return mapErr("activate managed certificate version", err)
@@ -181,6 +182,30 @@ func (s *Store) MaxManagedCertVersion(ctx context.Context, managedCertID uuid.UU
 		`SELECT COALESCE(max(version), 0) FROM managed_certificate_versions WHERE managed_cert_id = $1`,
 		managedCertID).Scan(&v)
 	return v, mapErr("max managed cert version", err)
+}
+
+// SetManagedCertificateDeployASAP sets deploy_asap on the current managed certificate version.
+func (s *Store) SetManagedCertificateDeployASAP(ctx context.Context, managedCertID uuid.UUID, deployASAP bool) error {
+	return execOne(ctx, s.q, "set managed certificate deploy_asap", `
+		UPDATE managed_certificate_versions SET deploy_asap = $2
+		WHERE managed_cert_id = $1 AND is_current`, managedCertID, deployASAP)
+}
+
+// CountManagedServersWithSuccessfulApply counts distinct assigned servers that
+// reported a successful apply for fingerprint since since (inclusive).
+// Managed applies store domain_id NULL; match via details fingerprint and server assignment.
+func (s *Store) CountManagedServersWithSuccessfulApply(ctx context.Context, managedCertID uuid.UUID, fingerprint string, since time.Time) (int, error) {
+	var n int
+	err := s.q.QueryRow(ctx, `
+		SELECT COUNT(DISTINCT ar.server_id)
+		FROM apply_results ar
+		INNER JOIN managed_cert_servers ms ON ms.server_id = ar.server_id AND ms.managed_cert_id = $1
+		WHERE ar.status = 'success'
+		  AND ar.domain_id IS NULL
+		  AND ar.reported_at >= $2
+		  AND ar.details->>'fingerprint' = $3`,
+		managedCertID, since, fingerprint).Scan(&n)
+	return n, mapErr("count managed successful applies", err)
 }
 
 // Managed certificate <-> server assignment

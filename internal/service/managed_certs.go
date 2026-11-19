@@ -110,6 +110,8 @@ type ManagedUploadInput struct {
 	ConfirmNotYetValid    bool
 	// ConfirmWarnings acknowledges every soft problem in one shot.
 	ConfirmWarnings bool
+	// DeployASAP marks the new current version for apply outside the maintenance window.
+	DeployASAP bool
 }
 
 // ManagedUploadResult describes the outcome of UploadManagedCertificate.
@@ -777,7 +779,8 @@ func (s *Services) UploadManagedCertificate(ctx context.Context, actor *domain.U
 		reason = "upload"
 	}
 	mv := &domain.ManagedCertificateVersion{
-		ManagedCertID: mc.ID, ActivatedAt: now, ActivatedBy: actorID(actor), Reason: truncate(reason, 256),
+		ManagedCertID: mc.ID, DeployASAP: in.DeployASAP,
+		ActivatedAt: now, ActivatedBy: actorID(actor), Reason: truncate(reason, 256),
 	}
 	soon := s.monitorSettings(ctx).ExpiringSoon
 	err = s.Store.Tx(ctx, func(tx store.Store) error {
@@ -863,6 +866,27 @@ func (s *Services) UploadManagedCertificate(ctx context.Context, actor *domain.U
 		res.ChainWarning = parsed.ChainWarning
 	}
 	return res, nil
+}
+
+// SetManagedDeployASAP sets or clears deploy_asap on the managed certificate's current version.
+func (s *Services) SetManagedDeployASAP(ctx context.Context, actor *domain.User, id uuid.UUID, deployASAP bool) (*domain.ManagedCertificateVersion, error) {
+	mc, err := s.Store.GetManagedCertificate(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.requireManagedWrite(ctx, s.Store, actor, mc); err != nil {
+		return nil, err
+	}
+	if err := s.Store.SetManagedCertificateDeployASAP(ctx, id, deployASAP); err != nil {
+		return nil, fmt.Errorf("set deploy_asap: %w", err)
+	}
+	mv, err := s.Store.GetCurrentManagedCertificateVersion(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	_ = s.audit(ctx, s.Store, actor, "managed_certificate.deploy_asap", "managed_certificate", mc.ID.String(),
+		map[string]any{"deploy_asap": deployASAP, "version": mv.Version})
+	return mv, nil
 }
 
 // ListManagedCertificateVersions returns the history of a managed

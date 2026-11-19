@@ -86,6 +86,7 @@ CREATE TABLE domain_certificates (
     certificate_id      uuid NOT NULL REFERENCES certificates(id) ON DELETE RESTRICT,
     version             int NOT NULL,
     is_current          boolean NOT NULL DEFAULT false,
+    deploy_asap         boolean NOT NULL DEFAULT false,
     activated_at        timestamptz NOT NULL DEFAULT now(),
     deactivated_at      timestamptz,
     activated_by        uuid REFERENCES users(id) ON DELETE SET NULL,
@@ -103,6 +104,7 @@ CREATE TABLE servers (
     last_seen_at        timestamptz,
     agent_status        text NOT NULL DEFAULT 'active'
                         CHECK (agent_status IN ('active', 'blocked_identity', 'offline', 'deleted')),
+    agent_version       text NOT NULL DEFAULT '',
     uses_custom_config  boolean NOT NULL DEFAULT false,
     config_version      bigint NOT NULL DEFAULT 0,
     agent_local_config              jsonb,
@@ -208,6 +210,7 @@ CREATE TABLE managed_certificate_versions (
     certificate_id      uuid NOT NULL REFERENCES certificates(id) ON DELETE RESTRICT,
     version             int NOT NULL,
     is_current          boolean NOT NULL DEFAULT false,
+    deploy_asap         boolean NOT NULL DEFAULT false,
     activated_at        timestamptz NOT NULL DEFAULT now(),
     deactivated_at      timestamptz,
     activated_by        uuid REFERENCES users(id) ON DELETE SET NULL,
@@ -303,7 +306,8 @@ CREATE TABLE system_settings (
 
 INSERT INTO system_settings (key, value) VALUES
     ('monitor', '{"interval":"5m","timeout":"10s","expiring_soon":"720h"}'),
-    ('notifications', '{"smtp":{"host":"","port":587,"username":"","password":"","from":"","tls":"starttls"},"telegram":{"bot_token":""},"worker":{"interval":"15s","batch":50,"max_attempts":8}}');
+    ('notifications', '{"smtp":{"host":"","port":587,"username":"","password":"","from":"","tls":"starttls"},"telegram":{"bot_token":""},"worker":{"interval":"15s","batch":50,"max_attempts":8}}'),
+    ('general', '{"allow_ip_change":false,"session_idle_timeout":"12h","session_max_duration":"24h","default_theme":"light","min_agent_version":"","password_min_length":8}');
 
 CREATE TABLE notification_accounts (
     id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),

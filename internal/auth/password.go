@@ -16,12 +16,19 @@ const (
 	argonThreads = 4
 	argonKeyLen  = 32
 	argonSaltLen = 16
-	minPassword  = 8
+	// DefaultMinPassword is used when callers do not pass an explicit minimum.
+	DefaultMinPassword = 8
 )
 
-func HashPassword(password string) (string, error) {
-	if len(password) < minPassword {
-		return "", fmt.Errorf("password must be at least %d characters", minPassword)
+// HashPassword hashes password with Argon2id. minLen is the required length;
+// values below DefaultMinPassword are raised to DefaultMinPassword.
+func HashPassword(password string, minLen ...int) (string, error) {
+	min := DefaultMinPassword
+	if len(minLen) > 0 && minLen[0] > min {
+		min = minLen[0]
+	}
+	if len(password) < min {
+		return "", fmt.Errorf("password must be at least %d characters", min)
 	}
 	salt := make([]byte, argonSaltLen)
 	if _, err := rand.Read(salt); err != nil {

@@ -232,3 +232,39 @@ func (h *Handler) pathInt64(w http.ResponseWriter, r *http.Request, name string)
 	}
 	return n, true
 }
+
+func (h *Handler) listNotificationOutbox(w http.ResponseWriter, r *http.Request, u *domain.User) {
+	status := r.URL.Query().Get("status")
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	out, err := h.svc.ListNotificationOutbox(r.Context(), u, status, limit, offset)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (h *Handler) retryNotificationOutbox(w http.ResponseWriter, r *http.Request, u *domain.User) {
+	id, ok := h.pathInt64(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := h.svc.RetryNotificationOutbox(r.Context(), u, id); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) dismissNotificationOutbox(w http.ResponseWriter, r *http.Request, u *domain.User) {
+	id, ok := h.pathInt64(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := h.svc.DismissNotificationOutbox(r.Context(), u, id); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

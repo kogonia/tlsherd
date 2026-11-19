@@ -341,6 +341,10 @@ when `agent.local.cfg` is configured, those local fields win at apply time.
 **Post-check** (schedule) is the existing “after restart, dial and compare fingerprint”
 step — distinct from a future in-process post-start command, if added later.
 
+When the server marks a certificate version **Deploy ASAP** (`deploy_asap`), the agent
+applies that fingerprint outside the maintenance window (same as urgent / known-version
+rollback), then reports the result.
+
 ### Example schedule snippet
 
 ```json

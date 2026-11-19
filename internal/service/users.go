@@ -63,7 +63,7 @@ func (s *Services) CreateUser(ctx context.Context, actor *domain.User, in Create
 	if !validRole(role) {
 		return nil, invalidf("role must be %q or %q", domain.RoleAdmin, domain.RoleOperator)
 	}
-	hash, err := auth.HashPassword(in.Password)
+	hash, err := auth.HashPassword(in.Password, s.EffectivePasswordMinLength(ctx))
 	if err != nil {
 		return nil, invalidf("%s", err.Error())
 	}
@@ -71,7 +71,10 @@ func (s *Services) CreateUser(ctx context.Context, actor *domain.User, in Create
 	if display == "" {
 		display = login
 	}
-	u := &domain.User{Login: login, DisplayName: display, PasswordHash: hash, Role: role, IsActive: true}
+	u := &domain.User{
+		Login: login, DisplayName: display, PasswordHash: hash, Role: role,
+		Theme: s.EffectiveDefaultTheme(ctx), IsActive: true,
+	}
 	err = s.Store.Tx(ctx, func(tx store.Store) error {
 		if err := tx.CreateUser(ctx, u); err != nil {
 			return err
@@ -214,7 +217,7 @@ func (s *Services) ResetPassword(ctx context.Context, actor *domain.User, id uui
 	if err := requireAdmin(actor); err != nil {
 		return err
 	}
-	hash, err := auth.HashPassword(newPassword)
+	hash, err := auth.HashPassword(newPassword, s.EffectivePasswordMinLength(ctx))
 	if err != nil {
 		return invalidf("%s", err.Error())
 	}

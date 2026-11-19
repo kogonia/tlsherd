@@ -484,3 +484,35 @@ func validateDestConfig(channel string, raw json.RawMessage) ([]byte, error) {
 		return nil, invalidf("invalid channel %q", channel)
 	}
 }
+
+// ListNotificationOutbox returns outbox rows for admin inspection. Admin only.
+func (s *Services) ListNotificationOutbox(ctx context.Context, actor *domain.User, status string, limit, offset int) ([]domain.NotificationOutbox, error) {
+	if err := requireAdmin(actor); err != nil {
+		return nil, err
+	}
+	return s.Store.ListNotificationOutbox(ctx, status, limit, offset)
+}
+
+// RetryNotificationOutbox resets one outbox row to pending. Admin only.
+func (s *Services) RetryNotificationOutbox(ctx context.Context, actor *domain.User, id int64) error {
+	if err := requireAdmin(actor); err != nil {
+		return err
+	}
+	if err := s.Store.RetryNotificationOutbox(ctx, id); err != nil {
+		return fmt.Errorf("retry notification outbox: %w", err)
+	}
+	_ = s.audit(ctx, s.Store, actor, "notifications.outbox_retry", "notification_outbox", fmt.Sprint(id), nil)
+	return nil
+}
+
+// DismissNotificationOutbox sets status=skipped. Admin only.
+func (s *Services) DismissNotificationOutbox(ctx context.Context, actor *domain.User, id int64) error {
+	if err := requireAdmin(actor); err != nil {
+		return err
+	}
+	if err := s.Store.DismissNotificationOutbox(ctx, id); err != nil {
+		return fmt.Errorf("dismiss notification outbox: %w", err)
+	}
+	_ = s.audit(ctx, s.Store, actor, "notifications.outbox_dismiss", "notification_outbox", fmt.Sprint(id), nil)
+	return nil
+}

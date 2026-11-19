@@ -130,8 +130,9 @@ func (a *Agent) processDomain(ctx context.Context, asg Assignment) error {
 	// StagedFingerprint) is a rollback/reactivation — apply even outside the window.
 	_, verErr := os.Stat(l.versionDir(asg.Fingerprint))
 	knownVersion := verErr == nil && ds.StagedFingerprint != asg.Fingerprint
-	if inWindow || urgent || knownVersion {
-		return a.apply(ctx, l, asg, ds, (urgent || knownVersion) && !inWindow)
+	forceOutside := urgent || knownVersion || asg.DeployASAP
+	if inWindow || forceOutside {
+		return a.apply(ctx, l, asg, ds, forceOutside && !inWindow)
 	}
 	return a.stage(ctx, l, asg, ds)
 }
@@ -316,7 +317,7 @@ func (a *Agent) apply(ctx context.Context, l layout, asg Assignment, ds DomainSt
 	ctx, cancel := context.WithTimeout(ctx, applyDeadline)
 	defer cancel()
 	log := a.log.With("domain", asg.FQDN, "fingerprint", asg.Fingerprint, "operation", "apply")
-	res := ApplyResult{ApplyID: uuid.NewString(), FQDN: asg.FQDN, Fingerprint: asg.Fingerprint, PreviousFingerprint: ds.Fingerprint, Details: map[string]any{"urgent": urgent}}.forAssignment(asg)
+	res := ApplyResult{ApplyID: uuid.NewString(), FQDN: asg.FQDN, Fingerprint: asg.Fingerprint, PreviousFingerprint: ds.Fingerprint, Details: map[string]any{"urgent": urgent, "deploy_asap": asg.DeployASAP}}.forAssignment(asg)
 
 	p, err := a.fetchValidated(ctx, l, asg)
 	if err != nil {

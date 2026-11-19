@@ -143,6 +143,7 @@ func (h *Handler) uploadManagedCert(w http.ResponseWriter, r *http.Request, u *d
 		"confirm_expired":         &in.ConfirmExpired,
 		"confirm_not_yet_valid":   &in.ConfirmNotYetValid,
 		"confirm_warnings":        &in.ConfirmWarnings,
+		"deploy_asap":             &in.DeployASAP,
 	} {
 		v := r.FormValue(name)
 		if v == "" {
@@ -247,6 +248,23 @@ func (h *Handler) removeManagedCertServer(w http.ResponseWriter, r *http.Request
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) setManagedDeployASAP(w http.ResponseWriter, r *http.Request, u *domain.User) {
+	id, ok := h.pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	var req setDeployASAPRequest
+	if !h.decodeJSON(w, r, &req, false) {
+		return
+	}
+	out, err := h.svc.SetManagedDeployASAP(r.Context(), u, id, req.DeployASAP)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // ---------------------------------------------------------------------------

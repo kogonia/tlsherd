@@ -20,7 +20,7 @@ import (
 )
 
 // Version is the agent version reported to the server (override with -ldflags).
-var Version = "dev"
+var Version = "unknown"
 
 const (
 	requestTimeout = 10 * time.Second

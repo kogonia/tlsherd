@@ -136,6 +136,7 @@ type DomainCertificate struct {
 	CertificateID uuid.UUID  `json:"certificate_id"`
 	Version       int        `json:"version"`
 	IsCurrent     bool       `json:"is_current"`
+	DeployASAP    bool       `json:"deploy_asap"`
 	ActivatedAt   time.Time  `json:"activated_at"`
 	DeactivatedAt *time.Time `json:"deactivated_at"`
 	ActivatedBy   *uuid.UUID `json:"activated_by"`
@@ -148,6 +149,7 @@ type Server struct {
 	LastIP           *netip.Addr `json:"last_ip"`
 	LastSeenAt       *time.Time  `json:"last_seen_at"`
 	AgentStatus      string      `json:"agent_status"`
+	AgentVersion     string      `json:"agent_version"`
 	UsesCustomConfig bool        `json:"uses_custom_config"`
 	ConfigVersion    int64       `json:"config_version"`
 	// Agent-reported local config (agent.local.cfg).
@@ -264,6 +266,7 @@ type ManagedCertificateVersion struct {
 	CertificateID uuid.UUID  `json:"certificate_id"`
 	Version       int        `json:"version"`
 	IsCurrent     bool       `json:"is_current"`
+	DeployASAP    bool       `json:"deploy_asap"`
 	ActivatedAt   time.Time  `json:"activated_at"`
 	DeactivatedAt *time.Time `json:"deactivated_at,omitempty"`
 	ActivatedBy   *uuid.UUID `json:"activated_by,omitempty"`

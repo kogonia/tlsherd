@@ -43,6 +43,8 @@ type UploadInput struct {
 	ConfirmCAMismatch bool
 	// ConfirmWarnings acknowledges every soft problem in one shot (UI confirm modal).
 	ConfirmWarnings bool
+	// DeployASAP marks the new current version for apply outside the maintenance window.
+	DeployASAP bool
 }
 
 // UploadResult describes the outcome of UploadCertificate.
@@ -222,6 +224,7 @@ func (s *Services) UploadCertificate(ctx context.Context, actor *domain.User, do
 	}
 	dc := &domain.DomainCertificate{
 		DomainID:    d.ID,
+		DeployASAP:  in.DeployASAP,
 		ActivatedAt: s.now(),
 		ActivatedBy: actorID(actor),
 		Reason:      "upload",
@@ -401,6 +404,27 @@ func (s *Services) GetCurrentCertificate(ctx context.Context, actor *domain.User
 		return nil, fmt.Errorf("get current certificate: %w", err)
 	}
 	return &CertVersion{DomainCertificate: *dc, Certificate: c}, nil
+}
+
+// SetDomainDeployASAP sets or clears deploy_asap on the domain's current certificate version.
+func (s *Services) SetDomainDeployASAP(ctx context.Context, actor *domain.User, domainID uuid.UUID, deployASAP bool) (*domain.DomainCertificate, error) {
+	if err := s.requireDomainPerm(ctx, actor, domainID, permWriteCerts); err != nil {
+		return nil, err
+	}
+	d, err := s.Store.GetDomain(ctx, domainID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.Store.SetDomainCertificateDeployASAP(ctx, domainID, deployASAP); err != nil {
+		return nil, fmt.Errorf("set deploy_asap: %w", err)
+	}
+	dc, err := s.Store.GetCurrentDomainCertificate(ctx, domainID)
+	if err != nil {
+		return nil, err
+	}
+	_ = s.audit(ctx, s.Store, actor, "certificate.deploy_asap", "domain", d.ID.String(),
+		map[string]any{"deploy_asap": deployASAP, "version": dc.Version})
+	return dc, nil
 }
 
 // Rollback re-activates an earlier version of the domain's certificate.

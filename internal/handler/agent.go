@@ -30,7 +30,7 @@ func (h *Handler) agentEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := h.svc.Enroll(r.Context(), ip, service.EnrollInput{
-		ClientName: req.ClientName, PresentedKey: bearerToken(r),
+		ClientName: req.ClientName, PresentedKey: bearerToken(r), AgentVersion: req.Version,
 		LocalConfig: req.LocalConfig, LocalConfigHash: req.LocalConfigHash,
 	})
 	if err != nil {

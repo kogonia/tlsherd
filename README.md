@@ -9,7 +9,7 @@ service, and reports the result. Operators work in an embedded web UI or the JSO
 | Path | Role |
 | --- | --- |
 | `cmd/tlsherd-server` | Control plane: JSON API, agent API, web UI, monitor + notification workers |
-| `cmd/tlsherd-agent` | Per-host agent |
+| `cmd/tlsherd-agent` | Per-host agent (version stamped via `-ldflags`; unstamped = `unknown`) |
 | `migrations/schema.sql` | Canonical PostgreSQL schema (from scratch) |
 | `deploy/` | docker-compose, systemd units, sample env / `agent.local.cfg` |
 | `Dockerfile` | Multi-stage image for `tlsherd-server` |
@@ -81,7 +81,9 @@ Layers (`handler → service → store`, no reverse dependencies):
 Served at `/` by the same binary; no frontend build step. Pages include Dashboard,
 Enrollments, Domains, Managed certs, Servers (tabbed: Server / Domains / Endpoints /
 **Agent local config** / Schedule), Agent defaults, Monitor settings, Notifications,
-Events, Groups, Users, Monitor, Account.
+Events, Groups, Users, Monitor, Account. Settings include **General** (session
+timeouts, IP auto-accept, default theme, min agent version, password length),
+Agent defaults, Monitor, and Notifications (including failed delivery outbox).
 
 ## Threat model
 

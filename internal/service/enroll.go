@@ -75,6 +75,7 @@ type EnrollResult struct {
 type EnrollInput struct {
 	ClientName      string
 	PresentedKey    string
+	AgentVersion    string
 	LocalConfig     *agentcfg.LocalConfig
 	LocalConfigHash string
 }
@@ -405,6 +406,13 @@ func (s *Services) Enroll(ctx context.Context, ip netip.Addr, in EnrollInput) (*
 		}
 		fallthrough
 	case idIPChanged:
+		if s.AllowIPChange(ctx) && id.server != nil {
+			res, err := s.autoAcceptIPChange(ctx, id, ip, name, retry, in)
+			if err != nil {
+				return nil, err
+			}
+			return res, nil
+		}
 		e, err := s.recordIdentityMismatch(ctx, id, ip, name)
 		if err != nil {
 			return nil, err
@@ -417,11 +425,72 @@ func (s *Services) Enroll(ctx context.Context, ip netip.Addr, in EnrollInput) (*
 	}
 }
 
+
+// autoAcceptIPChange updates the existing server to the new IP and returns an
+// accepted enroll result when general settings allow IP changes.
+func (s *Services) autoAcceptIPChange(ctx context.Context, id *identity, ip netip.Addr, name *string, retry time.Duration, in EnrollInput) (*EnrollResult, error) {
+	srv := id.server
+	now := s.now()
+	err := s.Store.Tx(ctx, func(tx store.Store) error {
+		srv.LastIP, srv.LastSeenAt, srv.AgentStatus = &ip, &now, domain.ServerActive
+		if name != nil {
+			srv.DisplayName = name
+		}
+		if ver := normalizeAgentVersion(in.AgentVersion); ver != "" {
+			srv.AgentVersion = ver
+		}
+		if err := tx.UpdateServer(ctx, srv); err != nil {
+			return err
+		}
+		if e, err := tx.GetPendingEnrollmentByIP(ctx, ip); err == nil {
+			e.Status, e.DecidedAt, e.ServerID = domain.EnrollAccepted, &now, &srv.ID
+			e.Reason = domain.ReasonIdentityIPChanged
+			if err := tx.UpdateEnrollment(ctx, e); err != nil {
+				return err
+			}
+		} else if !errors.Is(err, domain.ErrNotFound) {
+			return err
+		}
+		for _, k := range []string{
+			DedupKey(EvAgentEnrollPending, ip.String()),
+			DedupKey(EvAgentIdentityMismatch, srv.ID.String()),
+		} {
+			if err := s.resolve(ctx, tx, k, "auto_ip"); err != nil {
+				return err
+			}
+		}
+		if err := s.emit(ctx, tx, &domain.Event{
+			Type: EvAgentAccepted, Severity: SeverityInfo, ServerID: &srv.ID,
+			Message: fmt.Sprintf("agent %s IP change auto-accepted", srv.Display()),
+			Details: jsonDetails(map[string]any{
+				"ip": ip.String(), "reason": domain.ReasonIdentityIPChanged, "auto": true,
+			}),
+		}); err != nil {
+			return err
+		}
+		return s.audit(ctx, tx, nil, "agent_identity_ip_auto_accepted", "server", srv.ID.String(),
+			map[string]any{"ip": ip.String()})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("auto-accept IP change: %w", err)
+	}
+	s.log().Info("agent IP change auto-accepted",
+		"component", "service", "operation", "enroll", "server_id", srv.ID, "ip", ip.String())
+	return s.acceptedResult(ctx, srv, retry, in)
+}
+
 func pendingResult(e *domain.AgentEnrollment, retry time.Duration) *EnrollResult {
 	return &EnrollResult{Status: domain.EnrollPending, Reason: e.Reason, EnrollmentID: &e.ID, RetryAfter: agentcfg.Duration(retry)}
 }
 
 func (s *Services) acceptedResult(ctx context.Context, srv *domain.Server, retry time.Duration, in EnrollInput) (*EnrollResult, error) {
+	if ver := normalizeAgentVersion(in.AgentVersion); ver != "" && ver != srv.AgentVersion {
+		srv.AgentVersion = ver
+		if err := s.Store.UpdateServer(ctx, srv); err != nil {
+			return nil, fmt.Errorf("enroll: update version: %w", err)
+		}
+	}
+	s.maybeEmitAgentVersionOutdated(ctx, srv)
 	if in.LocalConfig != nil {
 		if err := s.ReportAgentLocalConfig(ctx, srv, *in.LocalConfig, in.LocalConfigHash, false); err != nil {
 			return nil, err

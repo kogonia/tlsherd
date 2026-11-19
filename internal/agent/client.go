@@ -85,6 +85,7 @@ type Assignment struct {
 	FQDN          string            `json:"fqdn"`
 	Fingerprint   string            `json:"fingerprint_sha256"`
 	NotAfter      time.Time         `json:"not_after"`
+	DeployASAP    bool              `json:"deploy_asap,omitempty"`
 	InstallMode   string            `json:"install_mode,omitempty"`
 	CertPath      string            `json:"cert_path,omitempty"`
 	KeyPath       string            `json:"key_path,omitempty"`
@@ -102,6 +103,7 @@ type ClientCertAssignment struct {
 	Name          string            `json:"name"`
 	Fingerprint   string            `json:"fingerprint_sha256"`
 	NotAfter      time.Time         `json:"not_after"`
+	DeployASAP    bool              `json:"deploy_asap,omitempty"`
 	InstallMode   string            `json:"install_mode,omitempty"`
 	CertPath      string            `json:"cert_path,omitempty"`
 	KeyPath       string            `json:"key_path,omitempty"`
@@ -112,7 +114,7 @@ type ClientCertAssignment struct {
 
 func (c ClientCertAssignment) assignment() Assignment {
 	return Assignment{
-		FQDN: c.Name, Fingerprint: c.Fingerprint, NotAfter: c.NotAfter,
+		FQDN: c.Name, Fingerprint: c.Fingerprint, NotAfter: c.NotAfter, DeployASAP: c.DeployASAP,
 		InstallMode: c.InstallMode, CertPath: c.CertPath, KeyPath: c.KeyPath,
 		ChainPath: c.ChainPath, FullchainPath: c.FullchainPath, Restart: c.Restart,
 		clientCert: true,

@@ -76,6 +76,7 @@ var pages = []page{
 	{Path: "/domains/{id}", Name: "domain", Title: "Domain", HasID: true},
 	{Path: "/servers", Name: "servers", Title: "Servers"},
 	{Path: "/servers/{id}", Name: "server", Title: "Server", HasID: true},
+	{Path: "/settings/general", Name: "general-settings", Title: "General", AdminOnly: true},
 	{Path: "/settings/agent-defaults", Name: "defaults", Title: "Agent defaults", AdminOnly: true},
 	{Path: "/settings/monitor", Name: "monitor-settings", Title: "Monitor settings", AdminOnly: true},
 	{Path: "/settings/notifications", Name: "notify-settings", Title: "Notifications", AdminOnly: true},
@@ -108,6 +109,7 @@ var navGroups = []navGroup{
 		{Label: "Users", Href: "/users", Page: "users", Abbr: "Usr", AdminOnly: true},
 	}},
 	{Label: "Settings", Items: []navItem{
+		{Label: "General", Href: "/settings/general", Page: "general-settings", Abbr: "Gen", AdminOnly: true},
 		{Label: "Agent defaults", Href: "/settings/agent-defaults", Page: "defaults", Abbr: "Def", AdminOnly: true},
 		{Label: "Monitor", Href: "/settings/monitor", Page: "monitor-settings", Abbr: "Mon", AdminOnly: true},
 		{Label: "Notifications", Href: "/settings/notifications", Page: "notify-settings", Abbr: "Ntf", AdminOnly: true},

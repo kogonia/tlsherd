@@ -1222,6 +1222,8 @@
   // ---- groups
 
   pages.groups = async function (root) {
+    const state = {limit: 25, offset: 0};
+    let groupsCache = [];
     const list = h('div', null);
     const form = h('form', {class: 'row'},
       field('Name', input('name', '', {required: true, maxlength: 128})),
@@ -1235,14 +1237,22 @@
         refresh();
       }
     });
-    root.replaceChildren(section('New group', form), section('Groups', list));
+    const pager = pagerBar(state, () => renderList());
+    root.replaceChildren(section('New group', form), section('Groups', pager.bar, list));
+
+    function renderList() {
+      const page = pageItems(groupsCache, state);
+      pager.update(page.length, groupsCache.length);
+      if (!groupsCache.length) {
+        list.replaceChildren(h('p', {class: 'muted'}, 'No groups yet.'));
+        return;
+      }
+      list.replaceChildren(h('div', null, page.map(groupItem)));
+    }
 
     async function refresh() {
-      await loadInto(list, async () => {
-        const groups = (await api('GET', '/groups')) || [];
-        if (!groups.length) return h('p', {class: 'muted'}, 'No groups yet.');
-        return h('div', null, groups.map(groupItem));
-      });
+      groupsCache = (await api('GET', '/groups')) || [];
+      renderList();
     }
 
     function groupItem(g) {
@@ -1466,12 +1476,14 @@
 
     // upload form is static: it must survive reloads of the other sections
     (function () {
+      const deployAsap = h('input', {type: 'checkbox', name: 'deploy_asap', value: 'true'});
       const form = h('form', null,
         h('div', {class: 'row'},
           field('Certificate (PEM)', h('input', {type: 'file', name: 'cert', required: true, accept: '.pem,.crt,.cer'})),
           field('Private key (PEM)', h('input', {type: 'file', name: 'key', required: true, accept: '.pem,.key'})),
           field('Chain (PEM, optional)', h('input', {type: 'file', name: 'chain', accept: '.pem,.crt,.cer'}))),
         h('p', {class: 'help'}, 'Each file up to 128 KiB, 1 MiB per request. The key must match. Expired, not-yet-valid, or domain-mismatch certificates need explicit confirmation.'),
+        h('p', null, h('label', {class: 'check'}, deployAsap, 'Deploy ASAP (critical)')),
         h('p', null, h('button', {type: 'submit', class: 'primary'}, 'Upload new version')));
       form.addEventListener('submit', async (ev) => {
         ev.preventDefault();
@@ -1524,15 +1536,19 @@
       const rows = vs.map((v) => {
         const c = v.certificate || {};
         const fp = c.fingerprint_sha256 || '';
+        const asapBadge = v.deploy_asap ? [' ', badge('ASAP', 'warn')] : null;
+        const asapToggle = v.is_current ? button(v.deploy_asap ? 'Clear ASAP' : 'Mark ASAP', async (b) => {
+          if (await act(b, () => api('PATCH', base + '/deploy-asap', {deploy_asap: !v.deploy_asap}), 'Deploy ASAP updated')) reload();
+        }) : null;
         return [
           'v' + v.version,
-          v.is_current ? badge('current', 'ok') : '',
+          v.is_current ? [badge('current', 'ok'), asapBadge] : '',
           h('span', {title: fp}, code(shortFp(fp))),
           c.subject_cn || '',
           expiryBadge(c.not_after),
           h('div', {class: 'small'}, fmt(v.activated_at), v.reason ? h('div', {class: 'muted'}, v.reason) : null),
           certDownloadParts(fp, c),
-          v.is_current ? muted('current') : btns(
+          v.is_current ? (asapToggle || muted('current')) : btns(
             button('Roll back', async (b) => {
               const reason = prompt('Reason for rolling back to v' + v.version + ' (optional):', '');
               if (reason === null) return;
@@ -1777,6 +1793,7 @@
     const sort = {key: '', dir: -1, type: 'number'};
     let agentFilter = '';
     let problemFilter = '';
+    let versionFilter = '';
     const list = h('div', null);
     const note = h('p', {class: 'muted'}, '');
     let serversCache = [];
@@ -1788,6 +1805,8 @@
     agentSel.addEventListener('change', () => { agentFilter = agentSel.value; state.offset = 0; renderList(); });
     const problemSel = select('problems', SERVER_PROBLEM_FILTER_OPTS, '');
     problemSel.addEventListener('change', () => { problemFilter = problemSel.value; state.offset = 0; renderList(); });
+    const versionSel = select('version', [['', 'All']], '');
+    versionSel.addEventListener('change', () => { versionFilter = versionSel.value; state.offset = 0; renderList(); });
     const search = liveSearch({
       freeText: true, placeholder: 'Search servers…',
       onChange() { state.offset = 0; renderList(); },
@@ -1797,6 +1816,7 @@
       h('div', {class: 'toolbar'},
         h('label', {class: 'inline'}, 'Agent ', agentSel),
         h('label', {class: 'inline'}, 'Problems ', problemSel),
+        h('label', {class: 'inline'}, 'Version ', versionSel),
         search.node, button('Refresh', () => refresh())),
       section('Servers', pager.bar, note, list));
 
@@ -1804,6 +1824,7 @@
       {label: ''},
       {label: 'Server', key: 'server', type: 'text'},
       {label: 'Agent', key: 'agent', type: 'text'},
+      {label: 'Version', key: 'version', type: 'text'},
       {label: 'Problems', key: 'problems', type: 'number'},
       {label: 'Last IP', key: 'last_ip', type: 'ip'},
       {label: 'Last seen', key: 'last_seen', type: 'date'},
@@ -1815,6 +1836,7 @@
     function sortVal(s, key) {
       if (key === 'server') return serverLabel(s);
       if (key === 'agent') return s.agent_status || '';
+      if (key === 'version') return s.agent_version || '';
       if (key === 'problems') return serverProblemScore(s);
       if (key === 'last_ip') return s.last_ip || '';
       if (key === 'last_seen') return s.last_seen_at;
@@ -1828,6 +1850,7 @@
       if (agentFilter && s.agent_status !== agentFilter) return false;
       if (problemFilter === 'ok') return serverProblemKinds(s).length === 0;
       if (problemFilter) return serverProblemKinds(s).includes(problemFilter);
+      if (versionFilter && s.agent_version !== versionFilter) return false;
       return true;
     }
 
@@ -1867,10 +1890,14 @@
         h('tbody', null, page.flatMap((s) => {
           const related = byServer.get(s.id) || [];
           const toggle = h('button', {type: 'button', class: 'link expand-toggle', 'aria-expanded': 'false'}, related.length ? '▸' : '·');
+          const versionCell = s.agent_version
+            ? (s.agent_version_outdated ? [s.agent_version, ' ', badge('outdated', 'warn')] : s.agent_version)
+            : muted('—');
           const main = h('tr', {class: 'server-row'},
             h('td', null, related.length ? toggle : muted('·')),
             h('td', null, link('/servers/' + s.id, serverLabel(s))),
             h('td', null, statusBadge(s.agent_status)),
+            h('td', null, versionCell),
             h('td', null, serverProblems(s)),
             h('td', null, s.last_ip || ''),
             h('td', null, fmt(s.last_seen_at)),
@@ -1878,7 +1905,7 @@
             h('td', null, s.uses_custom_config ? badge('custom', 'info') : muted('defaults')),
             h('td', null, related.length ? badge(String(related.length), 'info') : muted('0')));
           const detail = h('tr', {class: 'server-endpoints', hidden: true},
-            h('td', {colspan: 9}, endpointsNestedTable(related, dmap)));
+            h('td', {colspan: 10}, endpointsNestedTable(related, dmap)));
           if (related.length) {
             toggle.addEventListener('click', () => {
               const open = detail.hidden;
@@ -1902,6 +1929,13 @@
         if (!byServer.has(ep.server_id)) byServer.set(ep.server_id, []);
         byServer.get(ep.server_id).push(ep);
       });
+      // populate version filter options
+      const versions = new Set();
+      serversCache.forEach((s) => { if (s.agent_version) versions.add(s.agent_version); });
+      const versionOpts = [['', 'All']].concat([...versions].sort().map((v) => [v, v]));
+      versionSel.replaceChildren(...versionOpts.map(([val, lab]) => h('option', {value: val}, lab)));
+      if (versionFilter && !versions.has(versionFilter)) versionFilter = '';
+      versionSel.value = versionFilter;
       renderList();
     }
     await refresh();
@@ -2015,9 +2049,13 @@
       const [s, domains] = await Promise.all([api('GET', base), api('GET', '/domains')]);
       document.querySelector('#app h1').textContent = serverLabel(s);
       const dmap = new Map((domains || []).map((d) => [d.id, d]));
+      const versionDisplay = s.agent_version
+        ? (s.agent_version_outdated ? [s.agent_version, ' ', badge('outdated', 'warn')] : s.agent_version)
+        : '—';
       const info = h('dl', {class: 'kv'},
         h('dt', null, 'ID'), h('dd', null, code(s.id)),
         h('dt', null, 'Status'), h('dd', null, statusBadge(s.agent_status)),
+        h('dt', null, 'Version'), h('dd', null, versionDisplay),
         h('dt', null, 'Problems'), h('dd', null, serverProblems(s),
           s.open_events ? h('div', {class: 'small'}, link('/events?unresolved=1&server_id=' + s.id, s.open_events + ' open event(s) →')) : null),
         h('dt', null, 'Key prefix'), h('dd', null, s.key_prefix ? code(s.key_prefix) : '—'),
@@ -2554,12 +2592,14 @@
 
     (function () {
       const needsKey = true; // UI always shows key; server enforces by kind
+      const deployAsap = h('input', {type: 'checkbox', name: 'deploy_asap', value: 'true'});
       const form = h('form', null,
         h('div', {class: 'row row-top'},
           field('Certificate (PEM)', h('input', {type: 'file', name: 'cert', required: true, accept: '.pem,.crt,.cer'})),
           field('Private key (PEM)', h('input', {type: 'file', name: 'key', accept: '.pem,.key'}), 'Required for mtls_client; omit for CA / allowed client.'),
           field('Chain (PEM, optional)', h('input', {type: 'file', name: 'chain', accept: '.pem,.crt,.cer'}))),
         field('Reason', input('reason', '', {placeholder: 'optional'})),
+        h('p', null, h('label', {class: 'check'}, deployAsap, 'Deploy ASAP (critical)')),
         h('p', null, h('button', {type: 'submit', class: 'primary'}, 'Upload / replace')));
       form.addEventListener('submit', async (ev) => {
         ev.preventDefault();
@@ -2597,18 +2637,23 @@
       const rows = vs.map((v) => {
         const c = v.certificate || {};
         const fp = c.fingerprint_sha256 || '';
+        const asapBadge = v.deploy_asap ? [' ', badge('ASAP', 'warn')] : null;
+        const asapToggle = v.is_current ? button(v.deploy_asap ? 'Clear ASAP' : 'Mark ASAP', async (b) => {
+          if (await act(b, () => api('PATCH', base + '/deploy-asap', {deploy_asap: !v.deploy_asap}), 'Deploy ASAP updated')) reload();
+        }) : null;
         return [
           'v' + v.version,
-          v.is_current ? badge('current', 'ok') : '',
+          v.is_current ? [badge('current', 'ok'), asapBadge] : '',
           h('span', {title: fp}, code(shortFp(fp))),
           c.subject_cn || '',
           expiryBadge(c.not_after),
           h('div', {class: 'small'}, fmt(v.activated_at), v.reason ? h('div', {class: 'muted'}, v.reason) : null),
           certDownloadParts(fp, c),
+          asapToggle || '',
         ];
       });
       return section('Versions',
-        table(['Version', '', 'Fingerprint', 'Subject', 'Expires', 'Activated', 'Download'], rows, 'No certificate uploaded yet.'),
+        table(['Version', '', 'Fingerprint', 'Subject', 'Expires', 'Activated', 'Download', ''], rows, 'No certificate uploaded yet.'),
         h('p', {class: 'help'}, 'Missing chain/key stay inactive. Key download is administrators only.'));
     }
 
@@ -2713,6 +2758,42 @@
       }), 'Monitor settings saved')) location.reload();
     });
     root.replaceChildren(section('Monitor settings', form));
+  };
+
+  // ---- general settings (admin)
+
+  pages['general-settings'] = async function (root) {
+    if (!IS_ADMIN) { root.replaceChildren(h('p', {class: 'error'}, 'Admin only')); return; }
+    const cur = await api('GET', '/settings/general');
+    const allowIpChange = h('input', {type: 'checkbox', checked: !!cur.allow_ip_change});
+    const sessionIdle = input('session_idle_timeout', cur.session_idle_timeout || '30m', {placeholder: '30m'});
+    const sessionMax = input('session_max_duration', cur.session_max_duration || '24h', {placeholder: '24h'});
+    const defaultTheme = select('default_theme', [['light', 'Light'], ['dark', 'Dark']], cur.default_theme || 'light');
+    const minAgent = input('min_agent_version', cur.min_agent_version || '', {placeholder: 'e.g. 1.2.0'});
+    const passMinLen = input('password_min_length', String(cur.password_min_length || 12), {type: 'number', min: '8', max: '128'});
+    const form = h('form', null,
+      h('p', {class: 'help'}, 'General application settings.'),
+      h('div', {class: 'row'},
+        h('label', {class: 'check'}, allowIpChange, 'Allow IP address change (server enrollment)'),
+        field('Session idle timeout', sessionIdle, 'Inactive sessions expire after this period.'),
+        field('Session max duration', sessionMax, 'All sessions expire after this period.')),
+      h('div', {class: 'row'},
+        field('Default theme', defaultTheme, 'Theme for new users and login page.'),
+        field('Min agent version', minAgent, 'Minimum required agent version (optional).'),
+        field('Password min length', passMinLen, 'Minimum password length (8–128).')),
+      h('p', null, h('button', {type: 'submit', class: 'primary'}, 'Save')));
+    form.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      if (await act(form.querySelector('button'), () => api('PUT', '/settings/general', {
+        allow_ip_change: allowIpChange.checked,
+        session_idle_timeout: sessionIdle.value.trim(),
+        session_max_duration: sessionMax.value.trim(),
+        default_theme: defaultTheme.value,
+        min_agent_version: minAgent.value.trim(),
+        password_min_length: Number(passMinLen.value) || 12,
+      }), 'General settings saved')) location.reload();
+    });
+    root.replaceChildren(section('General settings', form));
   };
 
   // ---- agent defaults
@@ -3563,6 +3644,36 @@
     const testChannel = select('ch', [['email', 'Email'], ['telegram', 'Telegram'], ['webhook', 'Webhook']], 'email');
     const testCfg = h('input', {placeholder: 'address / chat_id / url'});
 
+    const outboxState = {limit: 25, offset: 0};
+    let outboxStatusFilter = 'failed';
+    const outboxList = h('div', null);
+    const outboxStatusSel = select('status', [['pending', 'Pending'], ['failed', 'Failed']], 'failed');
+    outboxStatusSel.addEventListener('change', () => { outboxStatusFilter = outboxStatusSel.value; outboxState.offset = 0; refreshOutbox(); });
+    const outboxPager = pagerBar(outboxState, () => refreshOutbox());
+
+    async function refreshOutbox() {
+      await loadInto(outboxList, async () => {
+        const params = new URLSearchParams({status: outboxStatusFilter, limit: String(outboxState.limit), offset: String(outboxState.offset)});
+        const items = (await api('GET', '/notifications/outbox?' + params)) || [];
+        outboxPager.update(items.length, null);
+        if (!items.length) return h('p', {class: 'muted'}, 'No ' + outboxStatusFilter + ' deliveries.');
+        return table(['Created', 'Status', 'Attempts', 'Last error', ''],
+          items.map((item) => [
+            fmt(item.created_at),
+            statusBadge(item.status),
+            String(item.attempts || 0),
+            h('span', {class: 'muted'}, item.last_error || '—'),
+            btns(
+              button('Retry', async (b) => {
+                if (await act(b, () => api('POST', '/notifications/outbox/' + item.id + '/retry'), 'Retry queued')) refreshOutbox();
+              }),
+              button('Dismiss', async (b) => {
+                if (await act(b, () => api('POST', '/notifications/outbox/' + item.id + '/dismiss'), 'Dismissed')) refreshOutbox();
+              }, 'danger')),
+          ]), 'No items.');
+      });
+    }
+
     root.replaceChildren(
       section('SMTP', h('div', {class: 'row'},
         field('Host', host), field('Port', port), field('Username', user),
@@ -3589,22 +3700,31 @@
           else config = {url: testCfg.value.trim()};
           await act(b, () => api('POST', '/settings/notifications/test', {channel: ch, config}), 'Test sent');
         }))),
-      h('p', {class: 'muted'}, 'Manage recipients under ', link('/notification-accounts', 'Notification accounts'), '.'));
+      h('p', {class: 'muted'}, 'Manage recipients under ', link('/notification-accounts', 'Notification accounts'), '.'),
+      section('Failed deliveries', 
+        h('div', {class: 'toolbar'}, 
+          h('label', {class: 'inline'}, 'Status ', outboxStatusSel),
+          button('Refresh', () => refreshOutbox())),
+        outboxPager.bar,
+        outboxList));
+    await refreshOutbox();
   };
 
   // ---- notification accounts (admin)
 
   pages['notify-accounts'] = async function (root) {
     if (!IS_ADMIN) { root.replaceChildren(h('p', {class: 'error'}, 'Admin only')); return; }
+    const state = {limit: 25, offset: 0};
     const sort = {key: 'name', dir: 1, type: 'text'};
     let accountsCache = [];
     const list = h('div', null);
+    const pager = pagerBar(state, () => renderList());
     root.replaceChildren(
       h('div', {class: 'toolbar'},
         button('New account', () => { location.href = '/notification-accounts/new'; }, 'primary'),
         button('Refresh', () => refresh()),
         link('/settings/notifications', 'Channel settings →')),
-      list);
+      section('Notification accounts', pager.bar, list));
     const cols = [
       {label: 'Name', key: 'name', type: 'text'},
       {label: 'Enabled', key: 'enabled', type: 'text'},
@@ -3615,8 +3735,7 @@
       {label: ''},
     ];
     function renderList() {
-      return loadInto(list, async () => {
-        const sorted = sortItems(accountsCache, sort, (a, key) => {
+      const sorted = sortItems(accountsCache, sort, (a, key) => {
           if (key === 'name') return a.name || '';
           if (key === 'enabled') return a.enabled ? 'yes' : 'no';
           if (key === 'allow_all') return a.allow_all ? 'all' : String((a.scopes || []).length);
@@ -3625,7 +3744,9 @@
           if (key === 'timezone') return a.timezone || 'UTC';
           return '';
         });
-        return table(cols, sorted.map((a) => [
+      const page = pageItems(sorted, state);
+      pager.update(page.length, sorted.length);
+      list.replaceChildren(table(cols, page.map((a) => [
           link('/notification-accounts/' + a.id, a.name),
           a.enabled ? badge('yes', 'ok') : badge('no', 'bad'),
           a.allow_all ? badge('all') : muted((a.scopes || []).length + ' scopes'),
@@ -3638,13 +3759,12 @@
           }, 'danger'),
         ]), 'No notification accounts yet.', {
           sort,
-          onSort(key, type) { applySortClick(sort, key, type); renderList(); },
-        });
-      });
+          onSort(key, type) { applySortClick(sort, key, type); state.offset = 0; renderList(); },
+        }));
     }
     async function refresh() {
       accountsCache = (await api('GET', '/notification-accounts')) || [];
-      await renderList();
+      renderList();
     }
     await refresh();
   };

@@ -31,6 +31,7 @@ type PollDomain struct {
 	Fingerprint     string          `json:"fingerprint_sha256"`
 	NotBefore       time.Time       `json:"not_before"`
 	NotAfter        time.Time       `json:"not_after"`
+	DeployASAP      bool            `json:"deploy_asap,omitempty"`
 	InstallMode     string          `json:"install_mode"`
 	CertPath        string          `json:"cert_path"`
 	KeyPath         string          `json:"key_path"`
@@ -48,6 +49,7 @@ type ClientCertAssignment struct {
 	Fingerprint     string          `json:"fingerprint_sha256"`
 	NotBefore       time.Time       `json:"not_before"`
 	NotAfter        time.Time       `json:"not_after"`
+	DeployASAP      bool            `json:"deploy_asap,omitempty"`
 	InstallMode     string          `json:"install_mode"`
 	CertPath        string          `json:"cert_path"`
 	KeyPath         string          `json:"key_path"`
@@ -74,6 +76,7 @@ type PollResponse struct {
 
 // AgentPollInput carries optional agent-reported local config.
 type AgentPollInput struct {
+	AgentVersion        string                `json:"agent_version,omitempty"`
 	LocalConfig         *agentcfg.LocalConfig `json:"local_config,omitempty"`
 	LocalConfigHash     string                `json:"local_config_hash,omitempty"`
 	LocalConfigConflict bool                  `json:"local_config_conflict,omitempty"`
@@ -102,6 +105,12 @@ type ApplyResultInput struct {
 // AgentPoll returns the effective config and the domain assignments of an
 // authenticated server. Domains without a current certificate are omitted.
 func (s *Services) AgentPoll(ctx context.Context, srv *domain.Server, in AgentPollInput) (*PollResponse, error) {
+	if ver := normalizeAgentVersion(in.AgentVersion); ver != "" && ver != srv.AgentVersion {
+		srv.AgentVersion = ver
+		if err := s.Store.UpdateServer(ctx, srv); err != nil {
+			return nil, fmt.Errorf("agent poll: update version: %w", err)
+		}
+	}
 	if in.LocalConfig != nil {
 		if err := s.ReportAgentLocalConfig(ctx, srv, *in.LocalConfig, in.LocalConfigHash, in.LocalConfigConflict); err != nil {
 			return nil, err
@@ -113,6 +122,7 @@ func (s *Services) AgentPoll(ctx context.Context, srv *domain.Server, in AgentPo
 		}
 		*srv = *fresh
 	}
+	s.maybeEmitAgentVersionOutdated(ctx, srv)
 	eff, err := s.effectiveConfig(ctx, srv)
 	if err != nil {
 		return nil, err
@@ -136,6 +146,7 @@ func (s *Services) AgentPoll(ctx context.Context, srv *domain.Server, in AgentPo
 		cc := ClientCertAssignment{
 			ManagedCertID: m.mc.ID, Name: m.mc.Name, Version: m.mv.Version,
 			Fingerprint: m.cert.FingerprintSHA256, NotBefore: m.cert.NotBefore, NotAfter: m.cert.NotAfter,
+			DeployASAP: m.mv.DeployASAP,
 			InstallMode: m.ms.InstallMode, CertPath: m.ms.CertPath, KeyPath: m.ms.KeyPath,
 			ChainPath: m.ms.ChainPath, FullchainPath: m.ms.FullchainPath,
 		}
@@ -148,6 +159,7 @@ func (s *Services) AgentPoll(ctx context.Context, srv *domain.Server, in AgentPo
 		pd := PollDomain{
 			DomainID: a.domain.ID, FQDN: a.domain.FQDN, Version: a.dc.Version,
 			Fingerprint: a.cert.FingerprintSHA256, NotBefore: a.cert.NotBefore, NotAfter: a.cert.NotAfter,
+			DeployASAP: a.dc.DeployASAP,
 			InstallMode: a.ds.InstallMode, CertPath: a.ds.CertPath, KeyPath: a.ds.KeyPath,
 			ChainPath: a.ds.ChainPath, FullchainPath: a.ds.FullchainPath,
 		}
@@ -356,6 +368,7 @@ func (s *Services) ReportApplyResult(ctx context.Context, srv *domain.Server, in
 	if len(details) > 0 && !json.Valid(details) {
 		return invalidf("details must be valid JSON")
 	}
+	details = ensureApplyFingerprint(details, in.Fingerprint)
 
 	err = s.Store.Tx(ctx, func(tx store.Store) error {
 		var domID, evDomID *uuid.UUID
@@ -395,6 +408,9 @@ func (s *Services) ReportApplyResult(ctx context.Context, srv *domain.Server, in
 					return err
 				}
 			}
+			if err := s.maybeClearDeployASAP(ctx, tx, dom, managed, in.Fingerprint); err != nil {
+				return err
+			}
 		}
 		if raise == "" {
 			return nil
@@ -415,6 +431,104 @@ func (s *Services) ReportApplyResult(ctx context.Context, srv *domain.Server, in
 	})
 	if err != nil {
 		return fmt.Errorf("report apply result: %w", err)
+	}
+	return nil
+}
+
+func ensureApplyFingerprint(details []byte, fingerprint string) []byte {
+	fingerprint = normalizeText(fingerprint)
+	if fingerprint == "" {
+		return details
+	}
+	m := map[string]any{}
+	if len(details) > 0 {
+		_ = json.Unmarshal(details, &m)
+	}
+	if m == nil {
+		m = map[string]any{}
+	}
+	m["fingerprint"] = fingerprint
+	b, err := json.Marshal(m)
+	if err != nil {
+		return details
+	}
+	return b
+}
+
+// maybeClearDeployASAP clears deploy_asap on the current version once every
+// assigned server has successfully applied fingerprint.
+func (s *Services) maybeClearDeployASAP(ctx context.Context, st store.Store, dom *domain.Domain, managed *domain.ManagedCertificate, fingerprint string) error {
+	fingerprint = normalizeText(fingerprint)
+	if fingerprint == "" {
+		return nil
+	}
+	if dom != nil {
+		dc, err := st.GetCurrentDomainCertificate(ctx, dom.ID)
+		if err != nil {
+			if errors.Is(err, domain.ErrNotFound) {
+				return nil
+			}
+			return err
+		}
+		if !dc.DeployASAP {
+			return nil
+		}
+		cert, err := st.GetCertificate(ctx, dc.CertificateID)
+		if err != nil {
+			return err
+		}
+		if cert.FingerprintSHA256 != fingerprint {
+			return nil
+		}
+		assigned, err := st.ListDomainServersByDomain(ctx, dom.ID)
+		if err != nil {
+			return err
+		}
+		if len(assigned) == 0 {
+			return st.SetDomainCertificateDeployASAP(ctx, dom.ID, false)
+		}
+		n, err := st.CountDomainServersWithSuccessfulApply(ctx, dom.ID, fingerprint, dc.ActivatedAt)
+		if err != nil {
+			return err
+		}
+		if n >= len(assigned) {
+			return st.SetDomainCertificateDeployASAP(ctx, dom.ID, false)
+		}
+		return nil
+	}
+	if managed == nil {
+		return nil
+	}
+	mv, err := st.GetCurrentManagedCertificateVersion(ctx, managed.ID)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	if !mv.DeployASAP {
+		return nil
+	}
+	cert, err := st.GetCertificate(ctx, mv.CertificateID)
+	if err != nil {
+		return err
+	}
+	if cert.FingerprintSHA256 != fingerprint {
+		return nil
+	}
+	assigned, err := st.ListManagedCertServersByCert(ctx, managed.ID)
+	if err != nil {
+		return err
+	}
+	if len(assigned) == 0 {
+		return st.SetManagedCertificateDeployASAP(ctx, managed.ID, false)
+	}
+	n, err := st.CountManagedServersWithSuccessfulApply(ctx, managed.ID, fingerprint, mv.ActivatedAt)
+	if err != nil {
+		return err
+	}
+	if n >= len(assigned) {
+		return st.SetManagedCertificateDeployASAP(ctx, managed.ID, false)
 	}
 	return nil
 }

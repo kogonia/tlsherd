@@ -34,7 +34,7 @@ func KnownEventTypes() []string {
 		EvCertUploadRejected, EvCertRollback, EvCertCAMismatch, EvManagedCertChangeOK,
 		EvAgentEnrollPending, EvAgentAccepted, EvAgentRejected, EvAgentIdentityMismatch,
 		EvAgentOffline, EvAgentApplyFailed, EvAgentVerifyFailed, EvAgentPostCheckMismatch,
-		EvAgentConfigUpdated, EvEndpointDown, EvEndpointCertMismatch, EvDomainUngrouped,
+		EvAgentConfigUpdated, EvAgentVersionOutdated, EvEndpointDown, EvEndpointCertMismatch, EvDomainUngrouped,
 	}
 }
 

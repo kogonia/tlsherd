@@ -35,7 +35,10 @@ backup: they re-enroll (a new key is issued after approval).
 2. Agents pick the old version up on their next poll (`poll_interval`; default 12 h). To speed
    up, lower `poll_interval` in the agent schedule config, or restart `tlsherd-agent` on the hosts.
    Outside the maintenance window the agent only stages the files unless the installed
-   certificate is within `urgent_threshold` of expiry.
+   certificate is within `urgent_threshold` of expiry, the fingerprint is already on disk
+   (rollback), or the current version is marked **Deploy ASAP** (upload checkbox or
+   **Mark ASAP** on the version). ASAP clears automatically once every assigned server has
+   applied successfully.
 3. Watch **Events** (`agent_apply_failed`, `agent_verify_failed`, `agent_post_check_mismatch`) and
    **Monitor → Check now** to confirm that endpoints serve the expected fingerprint.
 
@@ -82,4 +85,8 @@ host is gone. Rotate the certificates that host could read.
 | Host nginx/haproxy/… | **Servers → Agent local config** or edit `agent.local.cfg` — see [Agent guide](agent.md) |
 | Poll / maintenance window | **Agent defaults** or per-server schedule config |
 | Clear a stuck event | **Events → Dismiss** (events do not auto-expire) |
+| Deploy new cert outside window | Upload with **Deploy ASAP**, or **Mark ASAP** on current version |
+| Auto-accept agent IP changes | **Settings → General → Allow IP change** |
+| Inspect failed notifications | **Settings → Notifications → Failed deliveries** |
+| Agent binary version | **Servers** Version column (stamped at build; unstamped = `unknown`) |
 | Preview agent actions | `tlsherd-agent --once --dry-run` on the host |

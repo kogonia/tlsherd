@@ -57,7 +57,8 @@ jobs:
           mkdir -p dist
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' \
             -o dist/tlsherd-server-linux-amd64 ./cmd/tlsherd-server
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' \
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
+            -ldflags="-s -w -X github.com/kogonia/tlsherd/internal/agent.Version=${GITHUB_REF_NAME}" \
             -o dist/tlsherd-agent-linux-amd64 ./cmd/tlsherd-agent
 
       - name: Create GitHub Release

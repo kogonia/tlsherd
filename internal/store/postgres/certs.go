@@ -126,12 +126,12 @@ func (s *Store) ListExpiringCertificates(ctx context.Context, before time.Time) 
 
 // Domain certificates
 
-const domainCertCols = `id, domain_id, certificate_id, version, is_current, activated_at,
+const domainCertCols = `id, domain_id, certificate_id, version, is_current, deploy_asap, activated_at,
 	deactivated_at, activated_by, reason`
 
 func scanDomainCertificate(r rowScanner) (domain.DomainCertificate, error) {
 	var dc domain.DomainCertificate
-	err := r.Scan(&dc.ID, &dc.DomainID, &dc.CertificateID, &dc.Version, &dc.IsCurrent,
+	err := r.Scan(&dc.ID, &dc.DomainID, &dc.CertificateID, &dc.Version, &dc.IsCurrent, &dc.DeployASAP,
 		&dc.ActivatedAt, &dc.DeactivatedAt, &dc.ActivatedBy, &dc.Reason)
 	return dc, err
 }
@@ -172,16 +172,17 @@ func (s *Store) ActivateDomainCertificate(ctx context.Context, dc *domain.Domain
 
 		row := q.QueryRow(ctx, `
 			INSERT INTO domain_certificates
-				(id, domain_id, certificate_id, version, is_current, activated_at, activated_by, reason)
-			VALUES ($1, $2, $3, $4, true, $5, $6, $7)
+				(id, domain_id, certificate_id, version, is_current, deploy_asap, activated_at, activated_by, reason)
+			VALUES ($1, $2, $3, $4, true, $5, $6, $7, $8)
 			ON CONFLICT (domain_id, version) DO UPDATE
 			SET is_current = true,
+			    deploy_asap = EXCLUDED.deploy_asap,
 			    activated_at = EXCLUDED.activated_at,
 			    deactivated_at = NULL,
 			    activated_by = EXCLUDED.activated_by,
 			    reason = EXCLUDED.reason
 			RETURNING `+domainCertCols,
-			newID(dc.ID), dc.DomainID, dc.CertificateID, version, activatedAt, dc.ActivatedBy, dc.Reason)
+			newID(dc.ID), dc.DomainID, dc.CertificateID, version, dc.DeployASAP, activatedAt, dc.ActivatedBy, dc.Reason)
 		got, err := scanDomainCertificate(row)
 		if err != nil {
 			return mapErr("activate domain certificate", err)
@@ -253,4 +254,27 @@ func (s *Store) MaxDomainCertVersion(ctx context.Context, domainID uuid.UUID) (i
 		`SELECT COALESCE(max(version), 0) FROM domain_certificates WHERE domain_id = $1`,
 		domainID).Scan(&v)
 	return v, mapErr("max domain cert version", err)
+}
+
+// SetDomainCertificateDeployASAP sets deploy_asap on the current domain certificate.
+func (s *Store) SetDomainCertificateDeployASAP(ctx context.Context, domainID uuid.UUID, deployASAP bool) error {
+	return execOne(ctx, s.q, "set domain certificate deploy_asap", `
+		UPDATE domain_certificates SET deploy_asap = $2
+		WHERE domain_id = $1 AND is_current`, domainID, deployASAP)
+}
+
+// CountDomainServersWithSuccessfulApply counts distinct assigned servers that
+// reported a successful apply for fingerprint since since (inclusive).
+func (s *Store) CountDomainServersWithSuccessfulApply(ctx context.Context, domainID uuid.UUID, fingerprint string, since time.Time) (int, error) {
+	var n int
+	err := s.q.QueryRow(ctx, `
+		SELECT COUNT(DISTINCT ar.server_id)
+		FROM apply_results ar
+		INNER JOIN domain_servers ds ON ds.server_id = ar.server_id AND ds.domain_id = ar.domain_id
+		WHERE ar.domain_id = $1
+		  AND ar.status = 'success'
+		  AND ar.reported_at >= $2
+		  AND ar.details->>'fingerprint' = $3`,
+		domainID, since, fingerprint).Scan(&n)
+	return n, mapErr("count domain successful applies", err)
 }

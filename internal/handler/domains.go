@@ -183,7 +183,8 @@ func (h *Handler) uploadCertificate(w http.ResponseWriter, r *http.Request, u *d
 		!boolForm("confirm_expired", &in.ConfirmExpired) ||
 		!boolForm("confirm_not_yet_valid", &in.ConfirmNotYetValid) ||
 		!boolForm("confirm_ca_mismatch", &in.ConfirmCAMismatch) ||
-		!boolForm("confirm_warnings", &in.ConfirmWarnings) {
+		!boolForm("confirm_warnings", &in.ConfirmWarnings) ||
+		!boolForm("deploy_asap", &in.DeployASAP) {
 		return
 	}
 	res, err := h.svc.UploadCertificate(r.Context(), u, id, in)
@@ -353,4 +354,25 @@ func (h *Handler) removeDomainServer(w http.ResponseWriter, r *http.Request, u *
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type setDeployASAPRequest struct {
+	DeployASAP bool `json:"deploy_asap"`
+}
+
+func (h *Handler) setDomainDeployASAP(w http.ResponseWriter, r *http.Request, u *domain.User) {
+	id, ok := h.pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	var req setDeployASAPRequest
+	if !h.decodeJSON(w, r, &req, false) {
+		return
+	}
+	out, err := h.svc.SetDomainDeployASAP(r.Context(), u, id, req.DeployASAP)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
 }

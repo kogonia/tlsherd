@@ -244,3 +244,25 @@ func (h *Handler) putAgentDefaults(w http.ResponseWriter, r *http.Request, u *do
 	}
 	writeJSON(w, http.StatusOK, out)
 }
+
+func (h *Handler) getGeneralSettings(w http.ResponseWriter, r *http.Request, u *domain.User) {
+	out, err := h.svc.GetGeneralSettings(r.Context(), u)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (h *Handler) putGeneralSettings(w http.ResponseWriter, r *http.Request, u *domain.User) {
+	var in service.GeneralSettings
+	if !h.decodeJSON(w, r, &in, false) {
+		return
+	}
+	out, err := h.svc.UpdateGeneralSettings(r.Context(), u, in)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}

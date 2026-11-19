@@ -26,6 +26,19 @@ Compose extras: `TLSHERD_ADMIN_PORT` / `TLSHERD_AGENT_PORT` (published host port
 Admin and agent APIs use **separate TCP listeners** so firewalls can expose only the
 agent port to managed hosts while keeping the UI/API on a private network.
 
+## General
+
+Configured in the UI (**Settings → General**). Stored as `system_settings.general` (JSON).
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `allow_ip_change` | `false` | Auto-accept enrollments when a known agent key appears from a new IP (key changes still need manual approval) |
+| `session_idle_timeout` | `12h` | Idle session lifetime (slid on activity) |
+| `session_max_duration` | `24h` | Absolute session lifetime from login |
+| `default_theme` | `light` | Theme for new users (`light` / `dark`); Account toggle still overrides per user |
+| `min_agent_version` | *(empty)* | When set, warn (event + Servers badge) if agent version is missing, `unknown`, or below this value |
+| `password_min_length` | `8` | Minimum password length for create / change / reset |
+
 ## Monitor
 
 Configured in the UI (**Settings → Monitor**). Stored as `system_settings.monitor`

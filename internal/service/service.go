@@ -267,6 +267,7 @@ const (
 	EvAgentVerifyFailed       = "agent_verify_failed"
 	EvAgentPostCheckMismatch  = "agent_post_check_mismatch"
 	EvAgentConfigUpdated      = "agent_config_updated"
+	EvAgentVersionOutdated    = "agent_version_outdated"
 	EvEndpointDown            = "endpoint_down"
 	EvEndpointCertMismatch    = "endpoint_cert_mismatch"
 	EvDomainUngrouped         = "domain_ungrouped"

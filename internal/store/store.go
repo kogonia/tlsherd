@@ -75,6 +75,8 @@ type Store interface {
 	// managed_certificate_versions row points at id.
 	CertificateReferenced(ctx context.Context, id uuid.UUID) (bool, error)
 	MaxDomainCertVersion(ctx context.Context, domainID uuid.UUID) (int, error)
+	SetDomainCertificateDeployASAP(ctx context.Context, domainID uuid.UUID, deployASAP bool) error
+	CountDomainServersWithSuccessfulApply(ctx context.Context, domainID uuid.UUID, fingerprint string, since time.Time) (int, error)
 
 	// Managed certificates (CA, allowed_client, mtls_client)
 	CreateManagedCertificate(ctx context.Context, m *domain.ManagedCertificate) error
@@ -94,6 +96,8 @@ type Store interface {
 	ListManagedCertificateVersions(ctx context.Context, managedCertID uuid.UUID) ([]domain.ManagedCertificateVersion, error)
 	GetCurrentManagedCertificateVersion(ctx context.Context, managedCertID uuid.UUID) (*domain.ManagedCertificateVersion, error)
 	MaxManagedCertVersion(ctx context.Context, managedCertID uuid.UUID) (int, error)
+	SetManagedCertificateDeployASAP(ctx context.Context, managedCertID uuid.UUID, deployASAP bool) error
+	CountManagedServersWithSuccessfulApply(ctx context.Context, managedCertID uuid.UUID, fingerprint string, since time.Time) (int, error)
 
 	UpsertManagedCertServer(ctx context.Context, ms *domain.ManagedCertServer) error
 	DeleteManagedCertServer(ctx context.Context, managedCertID, serverID uuid.UUID) error
@@ -195,6 +199,9 @@ type Store interface {
 	UpdateNotificationOutbox(ctx context.Context, o *domain.NotificationOutbox) error
 	ListEventNotifications(ctx context.Context, eventIDs []int64) (map[int64][]domain.EventNotification, error)
 	GetOutboxWithDestination(ctx context.Context, id int64) (*domain.NotificationOutbox, *domain.NotificationDestination, *domain.NotificationAccount, error)
+	ListNotificationOutbox(ctx context.Context, status string, limit, offset int) ([]domain.NotificationOutbox, error)
+	RetryNotificationOutbox(ctx context.Context, id int64) error
+	DismissNotificationOutbox(ctx context.Context, id int64) error
 }
 
 // ManagedCertFilter selects managed certificates; zero fields match everything.

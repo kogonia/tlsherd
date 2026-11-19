@@ -11,14 +11,14 @@ import (
 
 // Servers
 
-const serverCols = `id, display_name, last_ip, last_seen_at, agent_status, uses_custom_config,
+const serverCols = `id, display_name, last_ip, last_seen_at, agent_status, agent_version, uses_custom_config,
 	config_version, agent_local_config, agent_local_config_hash, agent_local_config_updated_at,
 	pending_local_config, pending_local_config_base_hash, pending_local_config_revision,
 	local_config_conflict, created_at`
 
 func scanServer(r rowScanner) (domain.Server, error) {
 	var sv domain.Server
-	err := r.Scan(&sv.ID, &sv.DisplayName, &sv.LastIP, &sv.LastSeenAt, &sv.AgentStatus,
+	err := r.Scan(&sv.ID, &sv.DisplayName, &sv.LastIP, &sv.LastSeenAt, &sv.AgentStatus, &sv.AgentVersion,
 		&sv.UsesCustomConfig, &sv.ConfigVersion,
 		&sv.AgentLocalConfig, &sv.AgentLocalConfigHash, &sv.AgentLocalConfigUpdatedAt,
 		&sv.PendingLocalConfig, &sv.PendingLocalConfigBaseHash, &sv.PendingLocalConfigRevision,
@@ -33,14 +33,14 @@ func (s *Store) CreateServer(ctx context.Context, sv *domain.Server) error {
 		sv.AgentStatus = domain.ServerActive
 	}
 	err := s.q.QueryRow(ctx, `
-		INSERT INTO servers (id, display_name, last_ip, last_seen_at, agent_status,
+		INSERT INTO servers (id, display_name, last_ip, last_seen_at, agent_status, agent_version,
 			uses_custom_config, config_version,
 			agent_local_config, agent_local_config_hash, agent_local_config_updated_at,
 			pending_local_config, pending_local_config_base_hash, pending_local_config_revision,
 			local_config_conflict)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		RETURNING created_at`,
-		sv.ID, sv.DisplayName, sv.LastIP, sv.LastSeenAt, sv.AgentStatus,
+		sv.ID, sv.DisplayName, sv.LastIP, sv.LastSeenAt, sv.AgentStatus, sv.AgentVersion,
 		sv.UsesCustomConfig, sv.ConfigVersion,
 		nullableJSON(sv.AgentLocalConfig), sv.AgentLocalConfigHash, sv.AgentLocalConfigUpdatedAt,
 		nullableJSON(sv.PendingLocalConfig), sv.PendingLocalConfigBaseHash, sv.PendingLocalConfigRevision,
@@ -62,13 +62,13 @@ func (s *Store) ListServers(ctx context.Context) ([]domain.Server, error) {
 func (s *Store) UpdateServer(ctx context.Context, sv *domain.Server) error {
 	return execOne(ctx, s.q, "update server", `
 		UPDATE servers
-		SET display_name = $2, last_ip = $3, last_seen_at = $4, agent_status = $5,
-		    uses_custom_config = $6, config_version = $7,
-		    agent_local_config = $8, agent_local_config_hash = $9, agent_local_config_updated_at = $10,
-		    pending_local_config = $11, pending_local_config_base_hash = $12,
-		    pending_local_config_revision = $13, local_config_conflict = $14
+		SET display_name = $2, last_ip = $3, last_seen_at = $4, agent_status = $5, agent_version = $6,
+		    uses_custom_config = $7, config_version = $8,
+		    agent_local_config = $9, agent_local_config_hash = $10, agent_local_config_updated_at = $11,
+		    pending_local_config = $12, pending_local_config_base_hash = $13,
+		    pending_local_config_revision = $14, local_config_conflict = $15
 		WHERE id = $1`,
-		sv.ID, sv.DisplayName, sv.LastIP, sv.LastSeenAt, sv.AgentStatus,
+		sv.ID, sv.DisplayName, sv.LastIP, sv.LastSeenAt, sv.AgentStatus, sv.AgentVersion,
 		sv.UsesCustomConfig, sv.ConfigVersion,
 		nullableJSON(sv.AgentLocalConfig), sv.AgentLocalConfigHash, sv.AgentLocalConfigUpdatedAt,
 		nullableJSON(sv.PendingLocalConfig), sv.PendingLocalConfigBaseHash, sv.PendingLocalConfigRevision,

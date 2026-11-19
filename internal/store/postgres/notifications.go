@@ -316,3 +316,45 @@ func (s *Store) GetOutboxWithDestination(ctx context.Context, id int64) (*domain
 	}
 	return o, d, a, nil
 }
+
+// ListNotificationOutbox returns outbox rows for admin inspection (enriched with account name and channel).
+func (s *Store) ListNotificationOutbox(ctx context.Context, status string, limit, offset int) ([]domain.NotificationOutbox, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	query := `
+		SELECT o.id, o.event_id, o.destination_id, o.kind, o.payload, o.status, o.attempts,
+		       o.next_attempt_at, o.last_error, o.created_at, o.sent_at
+		FROM notification_outbox o
+	`
+	args := []any{}
+	if status != "" {
+		query += " WHERE o.status = $1"
+		args = append(args, status)
+		query += " ORDER BY o.next_attempt_at DESC, o.id DESC LIMIT $2 OFFSET $3"
+		args = append(args, limit, offset)
+	} else {
+		query += " ORDER BY o.next_attempt_at DESC, o.id DESC LIMIT $1 OFFSET $2"
+		args = append(args, limit, offset)
+	}
+	return queryAll(ctx, s.q, "list notification outbox", scanOutbox, query, args...)
+}
+
+// RetryNotificationOutbox resets one outbox row to pending with next_attempt_at=now().
+func (s *Store) RetryNotificationOutbox(ctx context.Context, id int64) error {
+	return execOne(ctx, s.q, "retry notification outbox", `
+		UPDATE notification_outbox
+		SET status = 'pending', next_attempt_at = now()
+		WHERE id = $1`, id)
+}
+
+// DismissNotificationOutbox sets status=skipped.
+func (s *Store) DismissNotificationOutbox(ctx context.Context, id int64) error {
+	return execOne(ctx, s.q, "dismiss notification outbox", `
+		UPDATE notification_outbox
+		SET status = 'skipped'
+		WHERE id = $1`, id)
+}
