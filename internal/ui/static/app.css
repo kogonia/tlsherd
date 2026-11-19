@@ -224,6 +224,9 @@ textarea { font-family: var(--mono); font-size: 12.5px; max-width: 640px; }
 .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
 .row.row-top { align-items: flex-start; }
 .row > label { margin: 0; flex: 0 1 220px; }
+.stack { display: flex; flex-direction: column; gap: 12px; max-width: 420px; }
+.stack > label, .stack > .check { margin: 0; }
+.stack-gap { margin: 12px 0 0; }
 fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 0 0 12px; padding: 6px 12px 10px; }
 legend { font-weight: 600; padding: 0 6px; }
 .help { color: var(--muted); font-size: 12px; font-weight: 400; display: block; }
@@ -249,12 +252,15 @@ td button { padding: 2px 8px; font-size: 12.5px; }
 .live-search.wide { max-width: 480px; width: 100%; }
 .live-search .live-search-input { width: 100%; margin-top: 0; }
 .live-search-list {
-  position: absolute; z-index: 20; left: 0; right: 0; max-height: 240px; overflow: auto;
+  position: absolute; z-index: 20; left: 0; right: auto;
+  min-width: 100%; width: max-content; max-width: min(90vw, 520px);
+  max-height: 240px; overflow: auto;
   background: var(--card); border: 1px solid var(--line); border-radius: 4px; box-shadow: 0 4px 12px var(--shadow);
 }
 .live-search-item {
   display: block; width: 100%; text-align: left; border: 0; background: transparent;
   padding: 6px 10px; border-radius: 0; font: inherit; color: var(--fg);
+  white-space: nowrap;
 }
 .live-search-item:hover, .live-search-item.active { background: var(--info-bg); }
 .toolbar .live-search { margin-right: 4px; }

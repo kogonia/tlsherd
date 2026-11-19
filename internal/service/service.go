@@ -271,6 +271,9 @@ const (
 	EvEndpointDown            = "endpoint_down"
 	EvEndpointCertMismatch    = "endpoint_cert_mismatch"
 	EvDomainUngrouped         = "domain_ungrouped"
+	EvNotificationSent        = "notification.sent"
+	EvNotificationFailed      = "notification.failed"
+	EvNotificationSkipped     = "notification.skipped"
 )
 
 // Event severities.
@@ -302,6 +305,8 @@ var instantEventTypes = map[string]struct{}{
 	EvCertExpiredUploadOK:     {},
 	EvCertNotYetValidUploadOK: {},
 	EvManagedCertChangeOK:     {},
+	EvNotificationSent:        {},
+	EvNotificationSkipped:     {},
 }
 
 // IsInstantEvent reports whether typ is a point-in-time event (no open lifecycle).
@@ -331,17 +336,24 @@ func (s *Services) emit(ctx context.Context, st store.Store, ev *domain.Event) e
 		if err := st.InsertInstantEvent(ctx, ev); err != nil {
 			return fmt.Errorf("emit event %s: %w", ev.Type, err)
 		}
-		s.notifyFanout(ctx, st, ev, domain.NotifyKindOpened)
+		if !skipNotifyFanout(ev.Type) {
+			s.notifyFanout(ctx, st, ev, domain.NotifyKindOpened)
+		}
 		return nil
 	}
 	inserted, err := st.UpsertOpenEvent(ctx, ev)
 	if err != nil {
 		return fmt.Errorf("emit event %s: %w", ev.Type, err)
 	}
-	if inserted {
+	if inserted && !skipNotifyFanout(ev.Type) {
 		s.notifyFanout(ctx, st, ev, domain.NotifyKindOpened)
 	}
 	return nil
+}
+
+// skipNotifyFanout avoids recursive delivery alerts for notification.* events.
+func skipNotifyFanout(typ string) bool {
+	return strings.HasPrefix(typ, "notification.")
 }
 
 // ResolveEvent resolves open events with dedupKey; resolvedBy is recorded in details.
@@ -359,6 +371,9 @@ func (s *Services) resolve(ctx context.Context, st store.Store, dedupKey, resolv
 		return fmt.Errorf("resolve event %s: %w", dedupKey, err)
 	}
 	for i := range evs {
+		if skipNotifyFanout(evs[i].Type) {
+			continue
+		}
 		s.notifyFanout(ctx, st, &evs[i], domain.NotifyKindResolved)
 	}
 	return nil
@@ -374,6 +389,9 @@ func (s *Services) resolveTypeDomain(ctx context.Context, st store.Store, eventT
 		return fmt.Errorf("resolve event %s domain %s: %w", eventType, domainID, err)
 	}
 	for i := range evs {
+		if skipNotifyFanout(evs[i].Type) {
+			continue
+		}
 		s.notifyFanout(ctx, st, &evs[i], domain.NotifyKindResolved)
 	}
 	return nil

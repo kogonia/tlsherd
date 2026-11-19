@@ -83,7 +83,8 @@ Enrollments, Domains, Managed certs, Servers (tabbed: Server / Domains / Endpoin
 **Agent local config** / Schedule), Agent defaults, Monitor settings, Notifications,
 Events, Groups, Users, Monitor, Account. Settings include **General** (session
 timeouts, IP auto-accept, default theme, min agent version, password length),
-Agent defaults, Monitor, and Notifications (including failed delivery outbox).
+Agent defaults, Monitor, and Notifications. Delivery outcomes show as
+`notification.sent` / `notification.failed` / `notification.skipped` on **Events**.
 
 ## Threat model
 

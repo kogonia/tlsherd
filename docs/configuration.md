@@ -63,7 +63,17 @@ Configured in the UI (**Notifications** for SMTP/Telegram/worker;
 | --- | --- | --- |
 | Email | SMTP host/port/user/password/from/TLS | `address` |
 | Telegram | `bot_token` | `chat_id` |
-| Webhook | — | `url`, optional `secret` (HMAC-SHA256 in `X-Tlsherd-Signature`) |
+| Webhook | *(none — per destination)* | `url`, optional `secret` (HMAC-SHA256 in `X-Tlsherd-Signature`) |
+
+Delivery outcomes are recorded on **Events** (and are not themselves re-notified):
+
+| Type | When | Lifecycle |
+| --- | --- | --- |
+| `notification.sent` | Successful delivery | instant |
+| `notification.failed` | Max attempts exhausted | open until dismiss / later success |
+| `notification.skipped` | Destination/account disabled, or outbox dismissed | instant |
+
+`pending` retries are not events (would be too noisy); only terminal outcomes are.
 
 Notify on **new open** and on **resolve/dismiss** (with duration). Dedup refresh of an
 already-open event does not re-notify. Working-hours window defers delivery; it does

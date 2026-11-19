@@ -118,7 +118,7 @@ func (s *Services) DismissEvent(ctx context.Context, actor *domain.User, id int6
 	if err != nil {
 		return fmt.Errorf("dismiss event: %w", err)
 	}
-	if closed != nil {
+	if closed != nil && !skipNotifyFanout(closed.Type) {
 		s.notifyFanout(ctx, s.Store, closed, domain.NotifyKindResolved)
 	}
 	_ = s.audit(ctx, s.Store, actor, "event.dismiss", "event", fmt.Sprintf("%d", id),

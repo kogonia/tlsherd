@@ -2766,21 +2766,19 @@
     if (!IS_ADMIN) { root.replaceChildren(h('p', {class: 'error'}, 'Admin only')); return; }
     const cur = await api('GET', '/settings/general');
     const allowIpChange = h('input', {type: 'checkbox', checked: !!cur.allow_ip_change});
-    const sessionIdle = input('session_idle_timeout', cur.session_idle_timeout || '30m', {placeholder: '30m'});
+    const sessionIdle = input('session_idle_timeout', cur.session_idle_timeout || '12h', {placeholder: '12h'});
     const sessionMax = input('session_max_duration', cur.session_max_duration || '24h', {placeholder: '24h'});
     const defaultTheme = select('default_theme', [['light', 'Light'], ['dark', 'Dark']], cur.default_theme || 'light');
-    const minAgent = input('min_agent_version', cur.min_agent_version || '', {placeholder: 'e.g. 1.2.0'});
-    const passMinLen = input('password_min_length', String(cur.password_min_length || 12), {type: 'number', min: '8', max: '128'});
-    const form = h('form', null,
-      h('p', {class: 'help'}, 'General application settings.'),
-      h('div', {class: 'row'},
-        h('label', {class: 'check'}, allowIpChange, 'Allow IP address change (server enrollment)'),
-        field('Session idle timeout', sessionIdle, 'Inactive sessions expire after this period.'),
-        field('Session max duration', sessionMax, 'All sessions expire after this period.')),
-      h('div', {class: 'row'},
-        field('Default theme', defaultTheme, 'Theme for new users and login page.'),
-        field('Min agent version', minAgent, 'Minimum required agent version (optional).'),
-        field('Password min length', passMinLen, 'Minimum password length (8–128).')),
+    const minAgent = input('min_agent_version', cur.min_agent_version || '', {placeholder: 'e.g. v1.2.0'});
+    const passMinLen = input('password_min_length', String(cur.password_min_length || 8), {type: 'number', min: '8', max: '128'});
+    const form = h('form', {class: 'stack'},
+      h('p', {class: 'help'}, 'Installation-wide settings. Per-user theme still overrides on Account.'),
+      h('label', {class: 'check'}, allowIpChange, 'Allow IP change (auto-accept known agent key from a new IP)'),
+      field('Session idle timeout', sessionIdle, 'Inactive sessions expire after this period (e.g. 12h).'),
+      field('Session max duration', sessionMax, 'Absolute lifetime from login (e.g. 24h); must be ≥ idle timeout.'),
+      field('Default theme', defaultTheme, 'Theme for new users.'),
+      field('Min agent version', minAgent, 'Warn when an agent reports below this (empty = disabled).'),
+      field('Password min length', passMinLen, 'Minimum password length (8–128).'),
       h('p', null, h('button', {type: 'submit', class: 'primary'}, 'Save')));
     form.addEventListener('submit', async (ev) => {
       ev.preventDefault();
@@ -2790,7 +2788,7 @@
         session_max_duration: sessionMax.value.trim(),
         default_theme: defaultTheme.value,
         min_agent_version: minAgent.value.trim(),
-        password_min_length: Number(passMinLen.value) || 12,
+        password_min_length: Number(passMinLen.value) || 8,
       }), 'General settings saved')) location.reload();
     });
     root.replaceChildren(section('General settings', form));
@@ -2833,9 +2831,12 @@
     const dmap = new Map((domains || []).map((d) => [d.id, d]));
     const types = ['cert_expired', 'cert_expiring_soon', 'cert_key_mismatch', 'cert_chain_invalid', 'cert_domain_mismatch_confirmed',
       'cert_expired_upload_confirmed', 'cert_not_yet_valid_upload_confirmed',
-      'cert_upload_rejected', 'cert_rollback_performed', 'agent_enroll_pending', 'agent_accepted', 'agent_rejected', 'agent_identity_mismatch',
+      'cert_upload_rejected', 'cert_rollback_performed', 'cert_ca_mismatch', 'managed_cert_identity_change_confirmed',
+      'agent_enroll_pending', 'agent_accepted', 'agent_rejected', 'agent_identity_mismatch',
       'agent_offline', 'agent_apply_failed', 'agent_verify_failed', 'agent_post_check_mismatch', 'agent_config_updated',
-      'endpoint_down', 'endpoint_cert_mismatch', 'domain_ungrouped'];
+      'agent_version_outdated',
+      'endpoint_down', 'endpoint_cert_mismatch', 'domain_ungrouped',
+      'notification.sent', 'notification.failed', 'notification.skipped'];
     const typeSel = liveSearch({
       allowEmpty: true, emptyLabel: 'all types', value: state.type, placeholder: 'Type…',
       items: types.map((t) => ({value: t, label: t})),
@@ -3643,71 +3644,46 @@
 
     const testChannel = select('ch', [['email', 'Email'], ['telegram', 'Telegram'], ['webhook', 'Webhook']], 'email');
     const testCfg = h('input', {placeholder: 'address / chat_id / url'});
+    const testSecret = h('input', {placeholder: 'webhook secret (optional)'});
 
-    const outboxState = {limit: 25, offset: 0};
-    let outboxStatusFilter = 'failed';
-    const outboxList = h('div', null);
-    const outboxStatusSel = select('status', [['pending', 'Pending'], ['failed', 'Failed']], 'failed');
-    outboxStatusSel.addEventListener('change', () => { outboxStatusFilter = outboxStatusSel.value; outboxState.offset = 0; refreshOutbox(); });
-    const outboxPager = pagerBar(outboxState, () => refreshOutbox());
-
-    async function refreshOutbox() {
-      await loadInto(outboxList, async () => {
-        const params = new URLSearchParams({status: outboxStatusFilter, limit: String(outboxState.limit), offset: String(outboxState.offset)});
-        const items = (await api('GET', '/notifications/outbox?' + params)) || [];
-        outboxPager.update(items.length, null);
-        if (!items.length) return h('p', {class: 'muted'}, 'No ' + outboxStatusFilter + ' deliveries.');
-        return table(['Created', 'Status', 'Attempts', 'Last error', ''],
-          items.map((item) => [
-            fmt(item.created_at),
-            statusBadge(item.status),
-            String(item.attempts || 0),
-            h('span', {class: 'muted'}, item.last_error || '—'),
-            btns(
-              button('Retry', async (b) => {
-                if (await act(b, () => api('POST', '/notifications/outbox/' + item.id + '/retry'), 'Retry queued')) refreshOutbox();
-              }),
-              button('Dismiss', async (b) => {
-                if (await act(b, () => api('POST', '/notifications/outbox/' + item.id + '/dismiss'), 'Dismissed')) refreshOutbox();
-              }, 'danger')),
-          ]), 'No items.');
-      });
-    }
+    const saveBtn = button('Save', async (b) => {
+      await act(b, () => api('PUT', '/settings/notifications', {
+        smtp: {host: host.value.trim(), port: Number(port.value) || 587, username: user.value.trim(),
+          password: pass.value, from: from.value.trim(), tls: tls.value},
+        telegram: {bot_token: bot.value},
+        worker: {interval: interval.value.trim() || '15s', batch: Number(batch.value) || 50,
+          max_attempts: Number(maxA.value) || 8},
+      }), 'Settings saved');
+    }, 'primary');
 
     root.replaceChildren(
       section('SMTP', h('div', {class: 'row'},
         field('Host', host), field('Port', port), field('Username', user),
         field('Password', pass), field('From', from), field('TLS', tls))),
       section('Telegram', field('Bot token', bot)),
-      section('Worker', h('div', {class: 'row'},
-        field('Interval', interval), field('Batch', batch), field('Max attempts', maxA))),
-      btns(button('Save', async (b) => {
-        await act(b, () => api('PUT', '/settings/notifications', {
-          smtp: {host: host.value.trim(), port: Number(port.value) || 587, username: user.value.trim(),
-            password: pass.value, from: from.value.trim(), tls: tls.value},
-          telegram: {bot_token: bot.value},
-          worker: {interval: interval.value.trim() || '15s', batch: Number(batch.value) || 50,
-            max_attempts: Number(maxA.value) || 8},
-        }), 'Settings saved');
-      }, 'primary')),
+      section('Webhook',
+        h('p', {class: 'help'},
+          'Webhook destinations are configured per account: URL and optional HMAC secret ',
+          '(sent as ', code('X-Tlsherd-Signature'), '). Add them under ',
+          link('/notification-accounts', 'Notification accounts'),
+          '. Delivery outcomes appear on ', link('/events', 'Events'),
+          ' as ', code('notification.sent'), ' / ', code('notification.failed'),
+          ' / ', code('notification.skipped'), '.')),
+      section('Worker',
+        h('div', {class: 'row'},
+          field('Interval', interval), field('Batch', batch), field('Max attempts', maxA)),
+        h('p', {class: 'stack-gap'}, saveBtn)),
       section('Send test', h('div', {class: 'row'},
-        field('Channel', testChannel), field('Target', testCfg),
+        field('Channel', testChannel), field('Target', testCfg), field('Secret', testSecret),
         button('Send test', async (b) => {
           const ch = testChannel.value;
           let config = {};
           if (ch === 'email') config = {address: testCfg.value.trim()};
           else if (ch === 'telegram') config = {chat_id: testCfg.value.trim()};
-          else config = {url: testCfg.value.trim()};
+          else config = {url: testCfg.value.trim(), secret: testSecret.value.trim()};
           await act(b, () => api('POST', '/settings/notifications/test', {channel: ch, config}), 'Test sent');
         }))),
-      h('p', {class: 'muted'}, 'Manage recipients under ', link('/notification-accounts', 'Notification accounts'), '.'),
-      section('Failed deliveries', 
-        h('div', {class: 'toolbar'}, 
-          h('label', {class: 'inline'}, 'Status ', outboxStatusSel),
-          button('Refresh', () => refreshOutbox())),
-        outboxPager.bar,
-        outboxList));
-    await refreshOutbox();
+      h('p', {class: 'muted'}, 'Manage recipients under ', link('/notification-accounts', 'Notification accounts'), '.'));
   };
 
   // ---- notification accounts (admin)

@@ -505,14 +505,24 @@ func (s *Services) RetryNotificationOutbox(ctx context.Context, actor *domain.Us
 	return nil
 }
 
-// DismissNotificationOutbox sets status=skipped. Admin only.
+// DismissNotificationOutbox sets status=skipped and records a notification.skipped event.
+// Admin only.
 func (s *Services) DismissNotificationOutbox(ctx context.Context, actor *domain.User, id int64) error {
 	if err := requireAdmin(actor); err != nil {
 		return err
 	}
+	o, dest, acc, err := s.Store.GetOutboxWithDestination(ctx, id)
+	if err != nil {
+		return fmt.Errorf("dismiss notification outbox: %w", err)
+	}
 	if err := s.Store.DismissNotificationOutbox(ctx, id); err != nil {
 		return fmt.Errorf("dismiss notification outbox: %w", err)
 	}
+	_ = s.resolve(ctx, s.Store, notificationDeliveryDedup(o, EvNotificationFailed), "dismiss")
+	o.Status = domain.NotifyOutboxSkipped
+	o.LastError = "dismissed"
+	s.emitNotificationDeliveryEvent(ctx, o, dest, acc, EvNotificationSkipped, SeverityInfo,
+		fmt.Sprintf("notification skipped for account %s via %s", acc.Name, dest.Channel))
 	_ = s.audit(ctx, s.Store, actor, "notifications.outbox_dismiss", "notification_outbox", fmt.Sprint(id), nil)
 	return nil
 }

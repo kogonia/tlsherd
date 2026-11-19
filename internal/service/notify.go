@@ -35,6 +35,7 @@ func KnownEventTypes() []string {
 		EvAgentEnrollPending, EvAgentAccepted, EvAgentRejected, EvAgentIdentityMismatch,
 		EvAgentOffline, EvAgentApplyFailed, EvAgentVerifyFailed, EvAgentPostCheckMismatch,
 		EvAgentConfigUpdated, EvAgentVersionOutdated, EvEndpointDown, EvEndpointCertMismatch, EvDomainUngrouped,
+		EvNotificationSent, EvNotificationFailed, EvNotificationSkipped,
 	}
 }
 
@@ -371,6 +372,8 @@ func (s *Services) deliverOutboxRow(ctx context.Context, set notify.Settings, o 
 		o.Status = domain.NotifyOutboxSkipped
 		o.LastError = "disabled"
 		_ = s.Store.UpdateNotificationOutbox(ctx, o)
+		s.emitNotificationDeliveryEvent(ctx, o, dest, acc, EvNotificationSkipped, SeverityInfo,
+			fmt.Sprintf("notification skipped (disabled) for account %s via %s", acc.Name, dest.Channel))
 		return
 	}
 	win := notify.Window{TZ: acc.Timezone, Days: acc.WindowDays, From: acc.WindowFrom, To: acc.WindowTo}
@@ -404,10 +407,13 @@ func (s *Services) deliverOutboxRow(ctx context.Context, set notify.Settings, o 
 		o.LastError = sendErr.Error()
 		if o.Attempts >= set.Worker.MaxAttempts {
 			o.Status = domain.NotifyOutboxFailed
-		} else {
-			o.Status = domain.NotifyOutboxPending
-			o.NextAttemptAt = s.now().Add(backoff(o.Attempts))
+			_ = s.Store.UpdateNotificationOutbox(ctx, o)
+			s.emitNotificationDeliveryEvent(ctx, o, dest, acc, EvNotificationFailed, SeverityWarning,
+				fmt.Sprintf("notification delivery failed for account %s via %s: %s", acc.Name, dest.Channel, o.LastError))
+			return
 		}
+		o.Status = domain.NotifyOutboxPending
+		o.NextAttemptAt = s.now().Add(backoff(o.Attempts))
 		_ = s.Store.UpdateNotificationOutbox(ctx, o)
 		return
 	}
@@ -416,6 +422,27 @@ func (s *Services) deliverOutboxRow(ctx context.Context, set notify.Settings, o 
 	o.SentAt = &now
 	o.LastError = ""
 	_ = s.Store.UpdateNotificationOutbox(ctx, o)
+	_ = s.resolve(ctx, s.Store, notificationDeliveryDedup(o, EvNotificationFailed), "delivered")
+	s.emitNotificationDeliveryEvent(ctx, o, dest, acc, EvNotificationSent, SeverityInfo,
+		fmt.Sprintf("notification delivered for account %s via %s", acc.Name, dest.Channel))
+}
+
+func notificationDeliveryDedup(o *domain.NotificationOutbox, typ string) string {
+	return DedupKey(typ, fmt.Sprintf("%d:%s:%s", o.EventID, o.DestinationID, o.Kind))
+}
+
+func (s *Services) emitNotificationDeliveryEvent(ctx context.Context, o *domain.NotificationOutbox, dest *domain.NotificationDestination, acc *domain.NotificationAccount, typ, severity, message string) {
+	key := notificationDeliveryDedup(o, typ)
+	_ = s.emit(ctx, s.Store, &domain.Event{
+		Type: typ, Severity: severity, DedupKey: &key,
+		Message: message,
+		Details: jsonDetails(map[string]any{
+			"outbox_id": o.ID, "event_id": o.EventID, "kind": o.Kind,
+			"account_id": acc.ID, "account": acc.Name,
+			"destination_id": dest.ID, "channel": dest.Channel,
+			"attempts": o.Attempts, "last_error": o.LastError, "status": o.Status,
+		}),
+	})
 }
 
 func backoff(attempts int) time.Duration {

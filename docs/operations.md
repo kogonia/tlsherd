@@ -87,6 +87,6 @@ host is gone. Rotate the certificates that host could read.
 | Clear a stuck event | **Events → Dismiss** (events do not auto-expire) |
 | Deploy new cert outside window | Upload with **Deploy ASAP**, or **Mark ASAP** on current version |
 | Auto-accept agent IP changes | **Settings → General → Allow IP change** |
-| Inspect failed notifications | **Settings → Notifications → Failed deliveries** |
+| Notification delivery status | **Events** filter `notification.sent` / `notification.failed` / `notification.skipped` |
 | Agent binary version | **Servers** Version column (stamped at build; unstamped = `unknown`) |
 | Preview agent actions | `tlsherd-agent --once --dry-run` on the host |
