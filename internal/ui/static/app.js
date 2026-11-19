@@ -492,6 +492,21 @@
 
   function json(v) { return JSON.stringify(v, null, 2); }
 
+  // parseHeaderLines turns "Name: value" lines into an object (empty → undefined).
+  function parseHeaderLines(text) {
+    const out = {};
+    String(text || '').split('\n').forEach((line) => {
+      const s = line.trim();
+      if (!s) return;
+      const i = s.indexOf(':');
+      if (i <= 0) return;
+      const name = s.slice(0, i).trim();
+      const value = s.slice(i + 1).trim();
+      if (name) out[name] = value;
+    });
+    return Object.keys(out).length ? out : undefined;
+  }
+
   // certDownloadParts renders cert/chain/key download controls. Missing parts
   // are muted; available parts fetch via XHR so errors toast instead of a JSON page.
   function certDownloadParts(fp, cert) {
@@ -3643,8 +3658,31 @@
     const maxA = h('input', {type: 'number', value: worker.max_attempts || 8});
 
     const testChannel = select('ch', [['email', 'Email'], ['telegram', 'Telegram'], ['webhook', 'Webhook']], 'email');
-    const testCfg = h('input', {placeholder: 'address / chat_id / url'});
-    const testSecret = h('input', {placeholder: 'webhook secret (optional)'});
+    const testFields = h('div', {class: 'row row-top'});
+    const testAddress = h('input', {placeholder: 'recipient@example.com'});
+    const testChatID = h('input', {placeholder: 'telegram chat id'});
+    const testURL = h('input', {placeholder: 'https://hooks.example/…'});
+    const testMethod = select('method',
+      [['POST', 'POST'], ['PUT', 'PUT'], ['PATCH', 'PATCH'], ['GET', 'GET']], 'POST');
+    const testHeaders = h('textarea', {rows: 3, placeholder: 'Authorization: Bearer …\nX-Custom: value'});
+    const testSecret = h('input', {placeholder: 'HMAC secret (optional)'});
+
+    function syncTestFields() {
+      const ch = testChannel.value;
+      if (ch === 'email') {
+        testFields.replaceChildren(field('Address', testAddress));
+      } else if (ch === 'telegram') {
+        testFields.replaceChildren(field('Chat ID', testChatID));
+      } else {
+        testFields.replaceChildren(
+          field('URL', testURL),
+          field('Method', testMethod),
+          field('Headers', testHeaders, 'One Header: value per line'),
+          field('Secret', testSecret, 'HMAC-SHA256 as X-Tlsherd-Signature'));
+      }
+    }
+    testChannel.addEventListener('change', syncTestFields);
+    syncTestFields();
 
     const saveBtn = button('Save', async (b) => {
       await act(b, () => api('PUT', '/settings/notifications', {
@@ -3663,8 +3701,8 @@
       section('Telegram', field('Bot token', bot)),
       section('Webhook',
         h('p', {class: 'help'},
-          'Webhook destinations are configured per account: URL and optional HMAC secret ',
-          '(sent as ', code('X-Tlsherd-Signature'), '). Add them under ',
+          'Webhook destinations are configured per account: URL, HTTP method, optional headers, ',
+          'and optional HMAC secret (', code('X-Tlsherd-Signature'), '). Add them under ',
           link('/notification-accounts', 'Notification accounts'),
           '. Delivery outcomes appear on ', link('/events', 'Events'),
           ' as ', code('notification.sent'), ' / ', code('notification.failed'),
@@ -3673,14 +3711,22 @@
         h('div', {class: 'row'},
           field('Interval', interval), field('Batch', batch), field('Max attempts', maxA)),
         h('p', {class: 'stack-gap'}, saveBtn)),
-      section('Send test', h('div', {class: 'row'},
-        field('Channel', testChannel), field('Target', testCfg), field('Secret', testSecret),
-        button('Send test', async (b) => {
+      section('Send test',
+        h('div', {class: 'row'}, field('Channel', testChannel)),
+        h('div', {class: 'stack-gap'}, testFields),
+        h('p', {class: 'stack-gap'}, button('Send test', async (b) => {
           const ch = testChannel.value;
           let config = {};
-          if (ch === 'email') config = {address: testCfg.value.trim()};
-          else if (ch === 'telegram') config = {chat_id: testCfg.value.trim()};
-          else config = {url: testCfg.value.trim(), secret: testSecret.value.trim()};
+          if (ch === 'email') config = {address: testAddress.value.trim()};
+          else if (ch === 'telegram') config = {chat_id: testChatID.value.trim()};
+          else {
+            config = {
+              url: testURL.value.trim(),
+              method: testMethod.value,
+              headers: parseHeaderLines(testHeaders.value),
+              secret: testSecret.value.trim(),
+            };
+          }
           await act(b, () => api('POST', '/settings/notifications/test', {channel: ch, config}), 'Test sent');
         }))),
       h('p', {class: 'muted'}, 'Manage recipients under ', link('/notification-accounts', 'Notification accounts'), '.'));
@@ -3799,15 +3845,24 @@
 
     const destBox = h('div', null);
 
+    function destSummary(d) {
+      const cfg = d.config || {};
+      if (d.channel === 'email') return cfg.address || '';
+      if (d.channel === 'telegram') return cfg.chat_id || '';
+      const method = (cfg.method || 'POST').toUpperCase();
+      let s = method + ' ' + (cfg.url || '');
+      const n = cfg.headers ? Object.keys(cfg.headers).length : 0;
+      if (n) s += ' · ' + n + ' header' + (n === 1 ? '' : 's');
+      if (cfg.secret) s += ' · signed';
+      return s;
+    }
+
     function renderDests() {
       destBox.replaceChildren(
         table(['Channel', 'Config', 'Enabled', ''],
           dests.map((d) => {
-            const cfg = d.config || {};
-            const summary = d.channel === 'email' ? cfg.address
-              : (d.channel === 'telegram' ? cfg.chat_id : cfg.url);
             return [
-              code(d.channel), muted(summary || ''),
+              code(d.channel), muted(destSummary(d)),
               d.enabled ? badge('yes', 'ok') : badge('no'),
               isNew ? '' : button('Remove', async (b) => {
                 if (await act(b, () => api('DELETE', '/notification-accounts/' + ID + '/destinations/' + d.id), 'Removed')) {
@@ -3822,26 +3877,63 @@
 
     function addDestForm() {
       const ch = select('ch', [['email', 'Email'], ['telegram', 'Telegram'], ['webhook', 'Webhook']], 'email');
-      const val = h('input', {placeholder: 'address / chat_id / url'});
-      const secret = h('input', {placeholder: 'webhook secret (optional)'});
-      return h('div', {class: 'row'}, field('Channel', ch), field('Target', val), field('Secret', secret),
-        button('Add destination', async (b) => {
+      const fields = h('div', {class: 'row row-top'});
+      const address = h('input', {placeholder: 'recipient@example.com'});
+      const chatID = h('input', {placeholder: 'telegram chat id'});
+      const url = h('input', {placeholder: 'https://hooks.example/…'});
+      const method = select('method',
+        [['POST', 'POST'], ['PUT', 'PUT'], ['PATCH', 'PATCH'], ['GET', 'GET']], 'POST');
+      const headers = h('textarea', {rows: 3, placeholder: 'Authorization: Bearer …\nX-Custom: value'});
+      const secret = h('input', {placeholder: 'HMAC secret (optional)'});
+
+      function syncFields() {
+        const channel = ch.value;
+        if (channel === 'email') {
+          fields.replaceChildren(field('Address', address));
+        } else if (channel === 'telegram') {
+          fields.replaceChildren(field('Chat ID', chatID));
+        } else {
+          fields.replaceChildren(
+            field('URL', url),
+            field('Method', method),
+            field('Headers', headers, 'One Header: value per line'),
+            field('Secret', secret, 'HMAC-SHA256 as X-Tlsherd-Signature'));
+        }
+      }
+      ch.addEventListener('change', syncFields);
+      syncFields();
+
+      return h('div', null,
+        h('div', {class: 'row'}, field('Channel', ch)),
+        h('div', {class: 'stack-gap'}, fields),
+        h('p', {class: 'stack-gap'}, button('Add destination', async (b) => {
           const channel = ch.value;
           let config = {};
-          if (channel === 'email') config = {address: val.value.trim()};
-          else if (channel === 'telegram') config = {chat_id: val.value.trim()};
-          else config = {url: val.value.trim(), secret: secret.value.trim()};
+          if (channel === 'email') config = {address: address.value.trim()};
+          else if (channel === 'telegram') config = {chat_id: chatID.value.trim()};
+          else {
+            config = {
+              url: url.value.trim(),
+              method: method.value,
+              headers: parseHeaderLines(headers.value),
+              secret: secret.value.trim(),
+            };
+          }
           let created = null;
           if (await act(b, async () => {
             created = await api('POST', '/notification-accounts/' + ID + '/destinations',
               {channel, config, enabled: true});
           }, 'Destination added')) {
             dests.push(created);
-            val.value = '';
+            address.value = '';
+            chatID.value = '';
+            url.value = '';
+            method.value = 'POST';
+            headers.value = '';
             secret.value = '';
             renderDests();
           }
-        }, 'primary'));
+        }, 'primary')));
     }
 
     renderDests();

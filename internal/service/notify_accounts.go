@@ -460,6 +460,38 @@ func (s *Services) validateScopes(ctx context.Context, scopes []domain.NotifySco
 	return nil
 }
 
+const maxWebhookHeaders = 20
+
+func normalizeWebhookHeaders(in map[string]string) (map[string]string, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	if len(in) > maxWebhookHeaders {
+		return nil, invalidf("webhook headers: at most %d allowed", maxWebhookHeaders)
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		k = strings.TrimSpace(k)
+		v = strings.TrimSpace(v)
+		if k == "" {
+			return nil, invalidf("webhook headers: empty name")
+		}
+		if strings.ContainsAny(k, "\r\n") || strings.ContainsAny(v, "\r\n") {
+			return nil, invalidf("webhook headers: CR/LF not allowed")
+		}
+		lk := strings.ToLower(k)
+		switch lk {
+		case "host", "content-length", "transfer-encoding", "connection", "upgrade", "expect", "te", "trailer":
+			return nil, invalidf("webhook headers: %q is not allowed", k)
+		}
+		out[k] = v
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
 func validateDestConfig(channel string, raw json.RawMessage) ([]byte, error) {
 	switch channel {
 	case domain.NotifyChannelEmail:
@@ -479,6 +511,23 @@ func validateDestConfig(channel string, raw json.RawMessage) ([]byte, error) {
 		if err := json.Unmarshal(raw, &c); err != nil || strings.TrimSpace(c.URL) == "" {
 			return nil, invalidf("webhook config requires url")
 		}
+		c.URL = strings.TrimSpace(c.URL)
+		if !strings.HasPrefix(c.URL, "http://") && !strings.HasPrefix(c.URL, "https://") {
+			return nil, invalidf("webhook url must start with http:// or https://")
+		}
+		c.Method = notify.NormalizeWebhookMethod(c.Method)
+		if !notify.ValidWebhookMethod(c.Method) {
+			return nil, invalidf("webhook method must be GET, POST, PUT, or PATCH")
+		}
+		if c.Method == "POST" {
+			c.Method = "" // omit default in stored JSON
+		}
+		headers, err := normalizeWebhookHeaders(c.Headers)
+		if err != nil {
+			return nil, err
+		}
+		c.Headers = headers
+		c.Secret = strings.TrimSpace(c.Secret)
 		return json.Marshal(c)
 	default:
 		return nil, invalidf("invalid channel %q", channel)

@@ -503,7 +503,7 @@ func (s *Services) sendDestination(ctx context.Context, set notify.Settings, des
 	case domain.NotifyChannelWebhook:
 		var cfg notify.WebhookConfig
 		_ = json.Unmarshal(dest.Config, &cfg)
-		return notify.SendWebhook(ctx, cfg.URL, cfg.Secret, msg.JSON)
+		return notify.SendWebhook(ctx, cfg, msg.JSON)
 	default:
 		return fmt.Errorf("unknown channel %q", dest.Channel)
 	}

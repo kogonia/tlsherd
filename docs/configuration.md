@@ -63,7 +63,7 @@ Configured in the UI (**Notifications** for SMTP/Telegram/worker;
 | --- | --- | --- |
 | Email | SMTP host/port/user/password/from/TLS | `address` |
 | Telegram | `bot_token` | `chat_id` |
-| Webhook | *(none — per destination)* | `url`, optional `secret` (HMAC-SHA256 in `X-Tlsherd-Signature`) |
+| Webhook | *(none — per destination)* | `url`; optional `method` (`GET`/`POST`/`PUT`/`PATCH`, default `POST`); optional `headers` map; optional `secret` (HMAC-SHA256 of body in `X-Tlsherd-Signature`, not sent for `GET`) |
 
 Delivery outcomes are recorded on **Events** (and are not themselves re-notified):
 

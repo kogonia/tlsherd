@@ -70,8 +70,10 @@ type TelegramConfig struct {
 
 // WebhookConfig is destination config for webhook.
 type WebhookConfig struct {
-	URL    string `json:"url"`
-	Secret string `json:"secret"`
+	URL     string            `json:"url"`
+	Method  string            `json:"method,omitempty"`  // GET, POST, PUT, PATCH; default POST
+	Headers map[string]string `json:"headers,omitempty"` // extra request headers
+	Secret  string            `json:"secret,omitempty"`  // HMAC-SHA256 → X-Tlsherd-Signature
 }
 
 // SendEmail delivers msg via SMTP.
@@ -216,19 +218,63 @@ func SendTelegram(ctx context.Context, botToken, chatID, text string) error {
 	return nil
 }
 
-// SendWebhook POSTs JSON to url with optional HMAC signature.
-func SendWebhook(ctx context.Context, url, secret string, payload []byte) error {
-	if url == "" {
+// NormalizeWebhookMethod returns an uppercase HTTP method, defaulting to POST.
+func NormalizeWebhookMethod(m string) string {
+	m = strings.ToUpper(strings.TrimSpace(m))
+	if m == "" {
+		return http.MethodPost
+	}
+	return m
+}
+
+// ValidWebhookMethod reports whether m is an allowed webhook method.
+func ValidWebhookMethod(m string) bool {
+	switch NormalizeWebhookMethod(m) {
+	case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch:
+		return true
+	default:
+		return false
+	}
+}
+
+var forbiddenWebhookHeaders = map[string]struct{}{
+	"host": {}, "content-length": {}, "transfer-encoding": {},
+	"connection": {}, "upgrade": {}, "expect": {}, "te": {}, "trailer": {},
+}
+
+// SendWebhook delivers JSON payload using cfg (method, headers, optional HMAC).
+func SendWebhook(ctx context.Context, cfg WebhookConfig, payload []byte) error {
+	if strings.TrimSpace(cfg.URL) == "" {
 		return fmt.Errorf("webhook url empty")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	method := NormalizeWebhookMethod(cfg.Method)
+	if !ValidWebhookMethod(method) {
+		return fmt.Errorf("webhook method %q not allowed", cfg.Method)
+	}
+	var body io.Reader
+	if method != http.MethodGet && len(payload) > 0 {
+		body = bytes.NewReader(payload)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, cfg.URL, body)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "tlsherd-notify/1")
-	if secret != "" {
-		mac := hmac.New(sha256.New, []byte(secret))
+	if method != http.MethodGet {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	for k, v := range cfg.Headers {
+		k = strings.TrimSpace(k)
+		if k == "" {
+			continue
+		}
+		if _, bad := forbiddenWebhookHeaders[strings.ToLower(k)]; bad {
+			continue
+		}
+		req.Header.Set(k, v)
+	}
+	if cfg.Secret != "" && method != http.MethodGet {
+		mac := hmac.New(sha256.New, []byte(cfg.Secret))
 		mac.Write(payload)
 		req.Header.Set("X-Tlsherd-Signature", hex.EncodeToString(mac.Sum(nil)))
 	}
